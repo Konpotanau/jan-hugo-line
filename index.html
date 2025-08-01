@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>ジャン富豪ライン - 4人打ち</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>ジャン富豪ライン (4人打ち)</h1>
+  <button id="start-cpu-btn">CPUと対戦開始</button>
+
+  <div id="mahjong-table">
+    <div id="player-top" class="player-area">
+      <div id="player-info-2" class="player-info">
+        <span></span><span class="player-score">25000</span>
+      </div>
+      <div class="hand-furo-wrapper horizontal">
+        <div id="furo-2" class="furo-container horizontal"></div>
+        <div id="hand-2" class="hand-container horizontal"></div>
+      </div>
+      <div id="discard-2" class="discard-row"></div>
+    </div>
+
+    <div id="player-left" class="player-area">
+      <div id="player-info-3" class="player-info">
+        <span></span><span class="player-score">25000</span>
+      </div>
+      <div class="hand-furo-wrapper vertical">
+        <div id="hand-3" class="hand-container vertical"></div>
+        <div id="furo-3" class="furo-container vertical"></div>
+      </div>
+      <div id="discard-3" class="discard-row vertical"></div>
+    </div>
+
+    <div id="player-right" class="player-area">
+      <div id="player-info-1" class="player-info">
+        <span></span><span class="player-score">25000</span>
+      </div>
+      <div class="hand-furo-wrapper vertical">
+        <div id="furo-1" class="furo-container vertical"></div>
+        <div id="hand-1" class="hand-container vertical"></div>
+      </div>
+      <div id="discard-1" class="discard-row vertical"></div>
+    </div>
+    
+    <div id="table-center">
+        <div id="table-state">
+            <div id="round-info">東1局 0本場</div>
+            <div id="riichi-sticks">供託: 0本</div>
+        </div>
+        <div id="game-info">
+            <div id="dora-container">
+              <span>ドラ: </span>
+              <span id="dora-display"></span>
+            </div>
+            <p id="yama-count"></p>
+        </div>
+        <div class="center-yaku-display"></div>
+    </div>
+
+    <div id="player-bottom" class="player-area">
+       <div id="player-info-0" class="player-info">
+        <span>あなた (東家)</span><span class="player-score">25000</span>
+      </div>
+      <div class="hand-furo-wrapper horizontal">
+        <div id="hand-0" class="hand-container horizontal"></div>
+        <div id="furo-0" class="furo-container horizontal"></div>
+      </div>
+      <div id="discard-0" class="discard-row"></div>
+    </div>
+  </div>
+  
+  <p id="info"></p>
+  
+  <div id="action-buttons">
+      <button id="riichi" style="display:none;">リーチ</button>
+      <button id="pon" style="display:none;">ポン</button>
+      <button id="chi" style="display:none;">チー</button>
+      <button id="kan" style="display:none;">カン</button>
+      <button id="kyukyu" style="display:none;">九種九牌</button>
+      <button id="ron" style="display:none;">ロン</button>
+      <button id="skip" style="display:none;">スキップ</button>
+  </div>
+  
+  <div id="result-modal" class="modal-overlay" style="display:none;">
+    <div id="yaku-result-content" class="modal-content">
+        </div>
+  </div>
+
+  <script src="constants.js"></script>
+  <script src="yaku.js"></script>
+  <script src="ui.js"></script>
+  <script src="game.js"></script> 
+</body>
+</html>
