@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const http = require('http');
+const path = require('path'); // ★ pathモジュールを追加
 const { WebSocketServer } = require('ws');
 const { Game } = require('./game-manager.js');
 
@@ -9,6 +10,9 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+
+// ★ 静的ファイルを提供する設定を追加
+app.use(express.static(path.join(__dirname, 'public')));
 
 let clients = [];
 let cpuPlayers = [];
@@ -57,13 +61,13 @@ function addCpusAndStartGame() {
         ...clients.map(c => ({ playerIndex: c.playerIndex, isCpu: false })),
         ...cpuPlayers
     ];
-    
+
     game = new Game(allPlayers, {
         onUpdate: broadcastGameState,
         onResult: broadcastRoundResult,
         onSystemMessage: broadcastSystemMessage
     });
-    
+
     game.setupNewRound(true);
 }
 
@@ -77,7 +81,7 @@ wss.on('connection', (ws) => {
     clients.push({ ws, playerIndex });
     console.log(`Player ${playerIndex} が接続しました。(現在 ${clients.length}人)`);
     ws.send(JSON.stringify({ type: 'player_assignment', playerIndex }));
-    
+
     clearTimeout(gameStartTimeout);
 
     if (clients.length >= 1) {
@@ -98,9 +102,9 @@ wss.on('connection', (ws) => {
                 addCpusAndStartGame();
                 return;
             }
-            
+
             if (!game || !game.state || !game.state.gameStarted) return;
-            
+
             if (data.type === 'discard') {
                 game.handleDiscard(client.playerIndex, data.tile);
             } else if (data.type === 'action') {
@@ -110,7 +114,7 @@ wss.on('connection', (ws) => {
             console.error('メッセージの処理に失敗しました:', e);
         }
     });
-    
+
     ws.on('close', () => {
         const disconnectingPlayer = clients.find(c => c.ws === ws);
         if (!disconnectingPlayer) return;
@@ -121,10 +125,10 @@ wss.on('connection', (ws) => {
         game = null;
         cpuPlayers = [];
         broadcastSystemMessage(`プレイヤーが切断したため、ゲームをリセットします。`);
-        
+
         // 残ったプレイヤーのインデックスを再割り当て
-        clients.forEach((c, i) => { 
-            c.playerIndex = i; 
+        clients.forEach((c, i) => {
+            c.playerIndex = i;
             c.ws.send(JSON.stringify({ type: 'player_assignment', playerIndex: i }));
         });
         console.log(`残りのプレイヤー: ${clients.map(c => c.playerIndex).join(', ')}`);
@@ -142,14 +146,14 @@ function createPersonalizedState(playerIndex) {
     }
 
     const stateCopy = JSON.parse(JSON.stringify(serializableState));
-    
+
     // 他のプレイヤーの手牌を隠す
     for (let i = 0; i < 4; i++) {
         if (i !== playerIndex && stateCopy.hands[i]) {
             stateCopy.hands[i] = new Array(stateCopy.hands[i].length).fill('back');
         }
     }
-    
+
     // アクションをパーソナライズ
     if (stateCopy.waitingForAction) {
         const myActions = stateCopy.waitingForAction.possibleActions[playerIndex];
