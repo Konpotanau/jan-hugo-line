@@ -139,12 +139,21 @@ function createPersonalizedState(playerIndex) {
     if (!game || !game.state) return {};
 
     const serializableState = { ...game.state };
+
+    // waitingForAction.actionTimeout はシリアライズできないので除外
     if (serializableState.waitingForAction) {
-        // actionTimeoutはシリアライズできないので除外
         const { actionTimeout, ...rest } = serializableState.waitingForAction;
         serializableState.waitingForAction = rest;
     }
+    
+    // ★★★ 修正箇所: turnTimer.timeout もシリアライズできないので除外 ★★★
+    if (serializableState.turnTimer) {
+        // timeoutプロパティ（setTimeoutの戻り値）を除外し、残りの情報を保持
+        const { timeout, ...rest } = serializableState.turnTimer;
+        serializableState.turnTimer = rest;
+    }
 
+    // stateを一度JSON文字列に変換し、それを再度パースすることで、循環参照のない安全なコピーを作成
     const stateCopy = JSON.parse(JSON.stringify(serializableState));
 
     // 他のプレイヤーの手牌を隠す
@@ -176,5 +185,6 @@ function createPersonalizedState(playerIndex) {
 
     return stateCopy;
 }
+
 
 server.listen(PORT, () => console.log(`サーバーがポート ${PORT} で起動しました。`));

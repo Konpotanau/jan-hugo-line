@@ -180,6 +180,25 @@ h1 {
 #round-info { font-weight: bold; }
 .center-yaku-display { min-height: 80px; display: flex; align-items: center; justify-content: center; }
 
+#timer-display {
+  width: 80px;
+  height: 80px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 40px;
+  font-weight: bold;
+  color: #ffdd00;
+  border: 3px solid #ffdd00;
+  z-index: 500;
+  transition: opacity 0.3s ease-in-out;
+  opacity: 0; /* Initially hidden */
+  pointer-events: none; /* Make it unclickable */
+  margin-bottom: 10px;
+}
+
 .player-info { 
     background: rgba(0,0,0,0.3); 
     padding: 4px 8px; 
@@ -200,35 +219,78 @@ h1 {
 
 #info {
     position: fixed;
-    bottom: 50px; left: 50%;
+    bottom: 250px; /* Adjusted position */
+    left: 70%;
     transform: translateX(-50%);
     font-size: 1.2em; font-weight: bold;
     background-color: rgba(0,0,0,0.5);
     padding: 5px 15px; border-radius: 5px;
+    z-index: 99;
 }
+
 #action-buttons {
     position: fixed;
-    bottom: 10px; left: 50%;
+    bottom: 100px; 
+    left: 65%;
     transform: translateX(-50%);
     z-index: 100;
-    display: flex;
-    gap: 5px;
+    display: none; /* 初期状態は非表示 */
+    gap: 10px;
     align-items: center;
+    background-color: rgba(0, 0, 0, 0.6);
+    padding: 10px 15px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
-#action-buttons button { font-size: 1em; padding: 8px 15px; margin: 0; cursor: pointer; border-radius: 5px; border: 1px solid #ccc; }
+
+#action-buttons button { 
+    font-size: 1.1em; 
+    padding: 8px 12px; 
+    margin: 0; 
+    cursor: pointer; 
+    border-radius: 5px; 
+    border: 1px solid #ccc; 
+    background-color: #f0f0f0;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    min-width: 80px;
+}
 #action-buttons button:hover { background-color: #ddd; }
 
-.choice-div {
-    background: rgba(0,0,0,0.6);
-    padding: 10px;
-    border-radius: 5px;
+.action-preview {
     display: flex;
-    gap: 10px;
+    justify-content: center;
+    align-items: center;
 }
-.choice-div button {
+
+.choice-modal {
+    position: absolute;
+    bottom: calc(100% + 10px); /* 親要素(#action-buttons)の上部に表示 */
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10, 20, 10, 0.8);
+    padding: 15px;
+    border-radius: 8px;
+    display: flex;
+    gap: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    z-index: 110;
+}
+.choice-modal .choice-button {
     background: #fff;
-    border: 1px solid #888;
-    padding: 5px;
+    border: 2px solid #888;
+    padding: 8px;
+    border-radius: 5px;
+}
+.choice-modal .choice-button:hover {
+    border-color: #ffdd00;
+    background-color: #fff8e1;
+}
+.choice-modal .choice-cancel-button {
+    background-color: #e0e0e0;
 }
 
 .modal-overlay {
@@ -263,4 +325,56 @@ h1 {
     font-size: 1.2em;
     cursor: pointer;
     z-index: 2000;
+}
+
+/* --- NEW STYLES --- */
+#tenpai-info-container {
+    position: fixed;
+    bottom: 90px;
+    left: 60%;
+    transform: translateX(-50%);
+    width: auto;
+    max-width: 80%;
+    background: rgba(0, 0, 0, 0.75);
+    border-radius: 8px;
+    padding: 8px;
+    z-index: 90;
+    display: none; /* Initially hidden */
+    flex-direction: column;
+    gap: 5px;
+    max-height: 150px;
+    overflow-y: auto;
+    font-size: 0.9em;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.tenpai-info-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 5px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+}
+
+.tenpai-info-item .discard-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: bold;
+}
+
+.tenpai-info-item .waits-label {
+    font-weight: bold;
+}
+
+.tenpai-info-item .waits-tiles {
+    display: flex;
+    gap: 2px;
+}
+
+.tile-tenpai-candidate {
+    box-shadow: 0 0 12px 3px rgba(255, 255, 0, 0.8);
+    border: 1px solid yellow;
 }
