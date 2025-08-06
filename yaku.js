@@ -1,97 +1,82 @@
 /**
- * 和了形（4面子1雀頭 or 七対子 or 国士無双）か判定する
+ * 和了形（n面子1雀頭 or n対子 or 国士無双）か判定する
  * @param {string[]} tiles - 手牌（和了牌を含む）
  * @param {string[][]} furo - 副露（鳴いた面子）の配列
  * @returns {object|null} 和了形ならその構成、でなければnull
  */
 // ★ 追加: Node.js環境とブラウザ環境の互換性対応
-// Node.js環境（サーバーサイド）で実行されている場合、`require`を使って依存モジュールを読み込む
-// ブラウザ環境では、<script>タグで先に読み込まれたグローバルスコープの関数が使われる
 if (typeof module !== 'undefined' && module.exports) {
-    var { createAllTiles, tileSort } = require('./constants.js');
+    var { tileSort } = require('./constants.js');
 }
 
 // --- Helper Functions (for Red Dora) ---
 const normalizeTile = (tile) => (tile && tile.startsWith('r5')) ? `5${tile[2]}` : tile;
+const isJi = (t) => t && ["東", "南", "西", "北", "白", "発", "中"].includes(t);
+const isNumberTile = (t) => t && (t.match(/^\d[mps]$/) || t.match(/^r5[mps]$/));
+const isYaochu = (t) => { if (!t) return false; if (isJi(t)) return true; if (!isNumberTile(t)) return false; const num = normalizeTile(t)[0]; return num === '1' || num === '9'; };
+
 
 function getWinningForm(tiles, furo = []) {
     const counts = tiles.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+    const handLength = tiles.length;
 
-    // 鳴いている場合は国士無双と七対子にはならない
-    if (furo.length > 0) {
-        // --- 4面子1雀頭 (鳴きあり) ---
-        const sortedTiles = [...tiles].sort(tileSort);
-        // 雀頭候補を探す
-        for (const tile in counts) {
-            if (counts[tile] >= 2) { 
-                const tempCounts = { ...counts };
-                tempCounts[tile] -= 2; // 雀頭を仮に抜く
-                
-                const remainingTilesArray = [];
-                for (const t in tempCounts) {
-                    for (let i = 0; i < tempCounts[t]; i++) {
-                        remainingTilesArray.push(t);
-                    }
-                }
-                
-                // 残りの手牌で面子を探索
-                const meldsInHand = findMelds(remainingTilesArray.sort(tileSort));
-                if (meldsInHand !== null && (meldsInHand.length + furo.length === 4)) {
-                    return { form: "4面子1雀頭", melds: meldsInHand, janto: tile };
-                }
-            }
-        }
-        return null; // 4面子1雀頭が成立しない
-    }
-
-    // --- 以下、門前のみの判定 ---
-    // 門前の場合、手牌は14枚のはず (getWaitsから呼ばれる場合は13枚)
-    if (tiles.length !== 14 && tiles.length !== 13) return null;
-
+    // --- 特殊形から判定 ---
     // 国士無双
-    if (tiles.length === 14) {
+    if (furo.length === 0) {
         const yaochuhai = ["1m", "9m", "1p", "9p", "1s", "9s", "東", "南", "西", "北", "白", "発", "中"];
-        const isKokushi = yaochuhai.every(t => (counts[t] || 0) >= 1);
-        if (isKokushi) {
-            const pair = Object.keys(counts).find(t => counts[t] === 2);
-            if (pair && Object.keys(counts).length === 13) return { form: "国士無双", janto: pair };
-        }
-    }
-
-    // 七対子
-    if (tiles.length === 14) {
-        const pairCount = Object.values(counts).filter(c => c === 2).length;
-        // 赤ドラは別の牌としてカウントされるため、種類数のチェックを修正
-        const uniqueNormalizedTiles = new Set(tiles.map(normalizeTile));
-        if (pairCount === 7 && uniqueNormalizedTiles.size === 7) {
-            const pairs = Object.keys(counts).filter(t => counts[t] === 2);
-            return { form: "七対子", pairs: pairs.sort(tileSort) };
-        }
-    }
-
-    // 4面子1雀頭 (門前)
-    const sortedTiles = [...tiles].sort(tileSort);
-    for (const tile in counts) {
-        if (counts[tile] >= 2) {
-            const tempCounts = { ...counts };
-            tempCounts[tile] -= 2;
-            
-            const remainingTilesArray = [];
-            for (const t in tempCounts) {
-                for (let i = 0; i < tempCounts[t]; i++) {
-                    remainingTilesArray.push(t);
-                }
+        const uniqueNormYaochuInHand = new Set(tiles.filter(isYaochu).map(normalizeTile));
+        
+        // 13枚以上ある場合、13種すべて揃っていれば国士無双
+        if (handLength >= 13) {
+            if (uniqueNormYaochuInHand.size === 13) {
+                const normCounts = tiles.map(normalizeTile).reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+                const jantoNorm = yaochuhai.find(t => normCounts[t] >= 2);
+                const janto = tiles.find(t => normalizeTile(t) === jantoNorm);
+                return { form: "国士無双", janto: janto || null };
             }
+        // 13枚未満の場合(テンパイ判定)、全ての牌が重複のないヤオチュー牌であれば国士無双テンパイとみなす
+        } else { 
+            if (uniqueNormYaochuInHand.size === handLength && tiles.every(isYaochu)) {
+                return { form: "国士無双", janto: null }; // テンパイ形なので雀頭はまだない
+            }
+        }
+    }
+
+    // n対子 (七対子の拡張)
+    if (furo.length === 0 && handLength > 0 && handLength % 2 === 0) {
+        const normCounts = tiles.map(normalizeTile).reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+        const isAllPairs = Object.values(normCounts).every(c => c === 2);
+        
+        if (isAllPairs) {
+            const numPairs = handLength / 2;
+            const pairs = Object.keys(normCounts).map(normTile => tiles.find(t => normalizeTile(t) === normTile));
+            return { form: "n対子", pairs: pairs.sort(tileSort), numPairs: numPairs };
+        }
+    }
+    
+    // --- n面子1雀頭 ---
+    const uniqueTiles = [...new Set(tiles)];
+    for (const jantoCandidate of uniqueTiles) {
+        if (counts[jantoCandidate] >= 2) {
+            const tempHand = [...tiles];
+            // 雀頭候補を2枚取り除く
+            tempHand.splice(tempHand.indexOf(jantoCandidate), 1);
+            tempHand.splice(tempHand.indexOf(jantoCandidate), 1);
             
-            const melds = findMelds(remainingTilesArray.sort(tileSort));
-            if (melds && melds.length + furo.length === Math.floor((tiles.length-2)/3)) {
-                return { form: "4面子1雀頭", melds, janto: tile };
+            // 残りが3の倍数でなければならない
+            if (tempHand.length % 3 !== 0) continue;
+
+            const melds = findMelds(tempHand.sort(tileSort));
+            if (melds !== null) {
+                const totalMeldCount = melds.length + furo.length;
+                return { form: "n面子1雀頭", melds, janto: jantoCandidate, numMelds: totalMeldCount };
             }
         }
     }
 
     return null;
 }
+
 
 /**
  * 残りの牌で面子（刻子 or 順子）を作れるか再帰的に探索
@@ -100,23 +85,24 @@ function getWinningForm(tiles, furo = []) {
  */
 function findMelds(tiles) {
     if (tiles.length === 0) return []; // 全て面子にできたら成功
+    if (tiles.length % 3 !== 0) return null; // 3の倍数でなければ失敗
 
-    const counts = tiles.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
     const t1 = tiles[0];
+    const norm_t1 = normalizeTile(t1);
 
     // --- Path 1: 刻子として切り出す試み ---
-    const norm_t1 = normalizeTile(t1);
     const kotsuCandidates = tiles.filter(t => normalizeTile(t) === norm_t1);
     if (kotsuCandidates.length >= 3) {
         const meld = kotsuCandidates.slice(0, 3);
         const nextTiles = [...tiles];
-        meld.forEach(tile => {
-            nextTiles.splice(nextTiles.indexOf(tile), 1);
+        meld.forEach(tileToRemove => {
+            const index = nextTiles.findIndex(t => t === tileToRemove);
+            if(index > -1) nextTiles.splice(index, 1);
         });
 
         const result = findMelds(nextTiles);
         if (result !== null) {
-            return [meld, ...result];
+            return [meld.sort(tileSort), ...result];
         }
     }
 
@@ -128,24 +114,24 @@ function findMelds(tiles) {
             const norm_t2 = `${n + 1}${s}`;
             const norm_t3 = `${n + 2}${s}`;
             
-            const t2 = tiles.find(t => normalizeTile(t) === norm_t2);
-            let t3 = null;
-            if (t2) {
-                const tempTiles = [...tiles];
-                tempTiles.splice(tempTiles.indexOf(t2), 1);
-                t3 = tempTiles.find(t => normalizeTile(t) === norm_t3);
-            }
+            const nextTilesForShuntsu = [...tiles];
+            
+            // findIndex and splice one by one to handle red fives correctly
+            const t1_real_index = nextTilesForShuntsu.findIndex(t => t === t1);
+            const t1_real = nextTilesForShuntsu.splice(t1_real_index, 1)[0];
 
-            if (t2 && t3) {
-                const meld = [t1, t2, t3];
-                const nextTiles = [...tiles];
-                 meld.forEach(tile => {
-                    nextTiles.splice(nextTiles.indexOf(tile), 1);
-                });
-
-                const result = findMelds(nextTiles);
-                if (result !== null) {
-                    return [meld.sort(tileSort), ...result];
+            const t2_index = nextTilesForShuntsu.findIndex(t => normalizeTile(t) === norm_t2);
+            if (t2_index > -1) {
+                const t2_real = nextTilesForShuntsu.splice(t2_index, 1)[0];
+                const t3_index = nextTilesForShuntsu.findIndex(t => normalizeTile(t) === norm_t3);
+                
+                if (t3_index > -1) {
+                    const t3_real = nextTilesForShuntsu.splice(t3_index, 1)[0];
+                    const meld = [t1_real, t2_real, t3_real];
+                    const result = findMelds(nextTilesForShuntsu);
+                    if (result !== null) {
+                        return [meld.sort(tileSort), ...result];
+                    }
                 }
             }
         }
@@ -165,177 +151,151 @@ function checkYaku(winContext) {
     let yaku = [];
     let yakumanHan = 0;
 
-    const winForm = getWinningForm(hand, furo);
-    if (!winForm) return { yakuList: [], totalHan: 0 };
-    
-    const allMelds = winForm.form === "4面子1雀頭" ? [...(winForm.melds || []), ...furo] : [];
     const allTiles = [...hand, ...furo.flatMap(f => f.tiles)];
-    const counts = allTiles.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+    const isRoutouhai = (t) => isNumberTile(t) && (normalizeTile(t)[0] === "1" || normalizeTile(t)[0] === "9");
 
-    // --- Yakuman ---
-    // 国士無双
+    // 構成役満 (和了形を問わない役) を最初に判定
+    if (allTiles.every(isJi)) {
+        yaku.push({ name: "字一色", han: 13, type: "yakuman" });
+        yakumanHan += 13;
+    }
+    if (allTiles.every(isRoutouhai)) {
+        yaku.push({ name: "清老頭", han: 13, type: "yakuman" });
+        yakumanHan += 13;
+    }
+    if (allTiles.every(t => isYaochu(t) && !isJi(t)) === false && allTiles.every(t => isYaochu(t))) {
+         yaku.push({ name: "混老頭", han: 2 });
+    }
+    const greenTiles = ["2s", "3s", "4s", "6s", "8s", "発"];
+    if (allTiles.every(t => greenTiles.includes(normalizeTile(t)))) {
+        yaku.push({ name: "緑一色", han: 13, type: "yakuman" });
+        yakumanHan += 13;
+    }
+
+    if (yakumanHan > 0) {
+        let doraCount = 0;
+        allTiles.forEach(tileInHand => {
+            if (tileInHand.startsWith('r5')) doraCount++;
+            dora.forEach(doraValue => {
+                if (normalizeTile(tileInHand) === getDoraTile(doraValue)) doraCount++;
+            });
+            if (isRiichi && uraDora) {
+                uraDora.forEach(doraValue => {
+                    if (normalizeTile(tileInHand) === getDoraTile(doraValue)) doraCount++;
+                });
+            }
+        });
+        if (doraCount > 0) yaku.push({ name: "ドラ", han: doraCount });
+        return { yakuList: yaku, totalHan: yakumanHan + doraCount, isYakuman: true };
+    }
+
+
+    const winForm = getWinningForm(hand, furo);
+    if (!winForm) return { yakuList: [], totalHan: 0, isYakuman: false };
+    
+    const allMelds = (winForm.melds || []).map(m => ({ tiles: m, type: 'anko' })).concat(furo);
+    
+    // --- Yakuman (面子構成に依存するもの) ---
     if (winForm.form === "国士無双") {
         yaku.push({ name: "国士無双", han: 13, type: "yakuman" });
         yakumanHan += 13;
     }
     
-    // 四暗刻
     const ankoMelds = allMelds.filter(m => isAnko(m, winContext));
-    if (ankoMelds.length === 4) {
-        // ロン和了の場合、待ちの形で単騎待ちか判定
+    if (ankoMelds.length === 4 && winForm.numMelds >= 4) {
         const isTanki = winForm.janto === winTile;
-        if (isTsumo || isTanki) {
-             yaku.push({ name: "四暗刻", han: 13, type: "yakuman" });
+        if (isTanki) {
+             yaku.push({ name: "四暗刻単騎", han: 26, type: "yakuman" });
+             yakumanHan += 26;
         } else {
-             yaku.push({ name: "四暗刻 (単騎待ち)", han: 26, type: "yakuman" }); // ダブル役満
+             yaku.push({ name: "四暗刻", han: 13, type: "yakuman" });
+             yakumanHan += 13;
         }
-        yakumanHan += isTsumo || isTanki ? 13 : 26;
     }
 
-    const kotsuKanMelds = allMelds.filter(m => isKotsu(m.tiles || m) || isKan(m.tiles || m));
+    const kotsuKanMelds = allMelds.filter(m => isKotsu(m.tiles) || (m.type && m.type.includes('kan')));
     
-    // 大三元
-    const dragonKotsu = kotsuKanMelds.filter(m => ["白", "発", "中"].includes(normalizeTile((m.tiles || m)[0])));
-    if (dragonKotsu.length === 3) {
+    const dragonKotsu = kotsuKanMelds.filter(m => ["白", "発", "中"].includes(normalizeTile(m.tiles[0])));
+    if (dragonKotsu.length === 3 && winForm.numMelds >= 3) {
         yaku.push({ name: "大三元", han: 13, type: "yakuman" });
         yakumanHan += 13;
     }
-    
-    // 字一色
-    if (allTiles.every(isJi)) {
-        yaku.push({ name: "字一色", han: 13, type: "yakuman" });
-        yakumanHan += 13;
-    }
-    
-    // 清老頭
-    if (allTiles.every(isRoutouhai)) {
-        yaku.push({ name: "清老頭", han: 13, type: "yakuman" });
-        yakumanHan += 13;
-    }
-
-    // 緑一色
-    const isRyuuiisou = allTiles.every(t => ["2s", "3s", "4s", "6s", "8s", "発", "r5s"].includes(t));
-    if (isRyuuiisou) {
-        yaku.push({ name: "緑一色", han: 13, type: "yakuman" });
-        yakumanHan += 13;
-    }
-    
-    // 九蓮宝燈
-    if (isMenzen && winForm.form === "4面子1雀頭") {
-        const numberTiles = allTiles.filter(isNumberTile);
-        const suits = new Set(numberTiles.map(t => normalizeTile(t)[1]));
-        if (suits.size === 1 && numberTiles.length === 14) {
-             const suit = suits.values().next().value;
-             const needed = ['1','1','1','2','3','4','5','6','7','8','9','9','9'];
-             const handNumbers = numberTiles.map(t => normalizeTile(t)[0]).sort();
-             let isChuuren = true;
-             let extraTile = null;
-             
-             const handCounts = handNumbers.reduce((a,c) => (a[c]=(a[c]||0)+1,a),{});
-             const neededCounts = needed.reduce((a,c) => (a[c]=(a[c]||0)+1,a),{});
-             
-             for(let i=1; i<=9; i++){
-                 const num = String(i);
-                 if ((handCounts[num]||0) < (neededCounts[num]||0)) {
-                     isChuuren = false;
-                     break;
-                 }
-                 if ((handCounts[num]||0) > (neededCounts[num]||0)) {
-                     if(extraTile !== null) { // 2種類以上多い牌がある
-                          isChuuren = false;
-                          break;
-                     }
-                     extraTile = num;
-                 }
-             }
-
-             if(isChuuren && extraTile !== null) {
-                const isJunsei = ['1','9'].includes(extraTile) ? handCounts[extraTile] === 4 : handCounts[extraTile] === 2;
-                if (isJunsei) {
-                     yaku.push({ name: "純正九蓮宝燈", han: 26, type: "yakuman" }); // ダブル
-                     yakumanHan += 26;
-                } else {
-                     yaku.push({ name: "九蓮宝燈", han: 13, type: "yakuman" });
-                     yakumanHan += 13;
-                }
-             }
-        }
-    }
-    
-    // 四槓子
-    const kanCount = allMelds.filter(m => m.type && m.type.includes('kan')).length;
+            
+    const kanCount = furo.filter(f => f.type && f.type.includes('kan')).length;
     if (kanCount === 4) {
         yaku.push({ name: "四槓子", han: 13, type: "yakuman" });
         yakumanHan += 13;
     }
+    
+    const windKotsu = kotsuKanMelds.filter(m => ["東", "南", "西", "北"].includes(normalizeTile(m.tiles[0])));
+    if (winForm.janto) {
+        const jantoIsWind = ["東", "南", "西", "北"].includes(normalizeTile(winForm.janto));
+        if (windKotsu.length === 4 && winForm.numMelds >= 4) {
+             yaku.push({ name: "大四喜", han: 26, type: "yakuman" });
+             yakumanHan += 26;
+        } else if (windKotsu.length === 3 && jantoIsWind && winForm.numMelds >= 3) {
+             yaku.push({ name: "小四喜", han: 13, type: "yakuman" });
+             yakumanHan += 13;
+        }
+    }
+
 
     if (yakumanHan > 0) {
-        // 役満が成立した場合、通常役は含めずにドラのみ加算する
+        yaku = yaku.filter(y => y.type === "yakuman");
         let doraCount = 0;
-        // 赤ドラ
-        doraCount += allTiles.filter(t => t.startsWith('r5')).length;
-        // 指示牌ドラ
-        dora.forEach(doraValue => {
-            allTiles.forEach(tileInHand => {
-                if (normalizeTile(tileInHand) === doraValue) {
-                    doraCount++;
-                }
+        allTiles.forEach(tileInHand => {
+            if (tileInHand.startsWith('r5')) doraCount++;
+            const doraTiles = dora.map(getDoraTile);
+            doraTiles.forEach(d => {
+                if (normalizeTile(tileInHand) === d) doraCount++;
             });
-        });
-        // 裏ドラ
-        if (isRiichi && uraDora) {
-             uraDora.forEach(doraValue => {
-                allTiles.forEach(tileInHand => {
-                    if (normalizeTile(tileInHand) === doraValue) {
-                        doraCount++;
-                    }
+            if (isRiichi && uraDora) {
+                const uraDoraTiles = uraDora.map(getDoraTile);
+                uraDoraTiles.forEach(d => {
+                    if (normalizeTile(tileInHand) === d) doraCount++;
                 });
-            });
-        }
+            }
+        });
         if (doraCount > 0) yaku.push({ name: "ドラ", han: doraCount });
         return { yakuList: yaku, totalHan: yakumanHan + doraCount, isYakuman: true };
     }
     
-    // --- Standard Hand ---
-    // Situation Yaku
+    // --- Standard Yaku ---
     if (isRiichi) yaku.push({ name: "立直", han: 1 });
     if (isIppatsu) yaku.push({ name: "一発", han: 1 });
     if (isMenzen && isTsumo) yaku.push({ name: "門前清自摸和", han: 1 });
     if (isRinshan) yaku.push({ name: "嶺上開花", han: 1 });
     if (isChankan) yaku.push({ name: "搶槓", han: 1 });
-
-    // Hand Yaku
     if (allTiles.every(t => !isYaochu(t))) yaku.push({ name: "断么九", han: 1 });
-
-    if (winForm.form === "4面子1雀頭") {
-        if (isMenzen && allMelds.every(m => isShuntsu(Array.isArray(m) ? m : m.tiles)) && !isYakuhai(winForm.janto, bakaze, jikaze) && isRyanmenWait(winForm, winTile)) {
+    
+    if (winForm.form === "n面子1雀頭") {
+        const shuntsuInHand = (winForm.melds || []).filter(m => isShuntsu(m));
+        if (isMenzen && winForm.numMelds >= 2 && shuntsuInHand.length === winForm.numMelds && !isYakuhai(winForm.janto, bakaze, jikaze) && isRyanmenWait(winForm, winTile)) {
             yaku.push({ name: "平和", han: 1 });
         }
         
         if (isMenzen) {
-            const shuntsuMelds = winForm.melds.filter(isShuntsu).map(m => m.map(normalizeTile).sort().join(','));
-            const shuntsuCounts = shuntsuMelds.reduce((acc, m) => { acc[m] = (acc[m] || 0) + 1; return acc; }, {});
+            const shuntsuMeldsNorm = (winForm.melds || []).filter(isShuntsu).map(m => m.map(normalizeTile).sort().join(','));
+            const shuntsuCounts = shuntsuMeldsNorm.reduce((acc, m) => { acc[m] = (acc[m] || 0) + 1; return acc; }, {});
             const iipeikouSets = Object.values(shuntsuCounts).filter(c => c >= 2).length;
-            if (iipeikouSets === 2) {
-                 // 七対子と二盃口は複合しない。二盃口を優先
-                 yaku = yaku.filter(y => y.name !== "七対子");
+            if (iipeikouSets === 2 && winForm.numMelds >= 4) { // 2盃口は4面子必要
                  yaku.push({ name: "二盃口", han: 3 });
-            } else if (iipeikouSets === 1) {
+            } else if (iipeikouSets === 1 && winForm.numMelds >= 2) { // 1盃口は2面子以上必要
                  yaku.push({ name: "一盃口", han: 1 });
             }
         }
     }
-    if (winForm.form === "七対子") {
-        yaku.push({ name: "七対子", han: 2 });
+    if (winForm.form === "n対子" && winForm.numPairs >= 2) {
+        yaku = yaku.filter(y => y.name !== "二盃口" && y.name !== "一盃口");
+        yaku.push({ name: `${winForm.numPairs}対子`, han: 2 });
     }
     
     const yakuhaiTiles = ["白", "発", "中"]; 
-    const countedYakuhai = new Set();
     kotsuKanMelds.forEach(m => {
-        const tile = normalizeTile((m.tiles || m)[0]);
-        if (yakuhaiTiles.includes(tile) && !countedYakuhai.has(tile)) { yaku.push({ name: `役牌 (飜牌)`, han: 1 }); countedYakuhai.add(tile); }
-        if (tile === bakaze && !countedYakuhai.has(tile)) { yaku.push({ name: `役牌 (場風)`, han: 1 }); countedYakuhai.add(tile); }
-        if (tile === jikaze && !countedYakuhai.has(tile)) { yaku.push({ name: `役牌 (自風)`, han: 1 }); countedYakuhai.add(tile); }
+        const tile = normalizeTile(m.tiles[0]);
+        if (yakuhaiTiles.includes(tile)) yaku.push({ name: `役牌 (${tile})`, han: 1 });
+        if (tile === bakaze) yaku.push({ name: `役牌 (場風)`, han: 1 });
+        if (tile === jikaze) yaku.push({ name: `役牌 (自風)`, han: 1 });
     });
 
     const numberTilesOnly = allTiles.filter(isNumberTile);
@@ -346,114 +306,103 @@ function checkYaku(winContext) {
         else if (numberTilesOnly.length === allTiles.length) yaku.push({ name: "清一色", han: isMenzen ? 6 : 5 });
     }
     
-    if (allTiles.every(isYaochu)) {
-        // 清老頭は役満で判定済み
-        yaku.push({ name: "混老頭", han: 2 });
-    }
+    // 混老頭は構成役満としてチェック済み
     
-    if (winForm.form === "4面子1雀頭") {
-        const shuntsuMelds = allMelds.filter(m => isShuntsu(m.tiles || m));
-        
-        // チャンタ / 純チャン
-        const isChanta = allMelds.every(m => (m.tiles || m).some(isYaochu)) && isYaochu(winForm.janto);
+    if (winForm.form === "n面子1雀頭") {
+        const isChanta = allMelds.every(m => m.tiles.some(isYaochu)) && winForm.janto && isYaochu(winForm.janto);
         if (isChanta) {
-            const isJunchan = allMelds.every(m => (m.tiles || m).some(isRoutouhai)) && isRoutouhai(winForm.janto);
+            const isJunchan = allTiles.every(t => isRoutouhai(t) || isJi(t) === false);
             if (isJunchan) {
                 yaku.push({ name: "純全帯么九", han: isMenzen ? 3 : 2 });
             } else {
                 yaku.push({ name: "混全帯么九", han: isMenzen ? 2 : 1 });
             }
         }
-
-        // 一気通貫
-        const suitsInShuntsu = new Set(shuntsuMelds.map(m => normalizeTile((m.tiles || m)[0])[1]));
-        for (const s of suitsInShuntsu) {
-            const suitShuntsu = shuntsuMelds.filter(m => normalizeTile((m.tiles || m)[0])[1] === s);
-            const starts = new Set(suitShuntsu.map(m => normalizeTile((m.tiles || m)[0])[0]));
-            if (starts.has('1') && starts.has('4') && starts.has('7')) {
-                yaku.push({ name: "一気通貫", han: isMenzen ? 2 : 1 });
-                break;
+        
+        const shuntsuMelds = allMelds.filter(m => isShuntsu(m.tiles));
+        if (winForm.numMelds >= 3) { // 最低3面子必要
+            const suitsInShuntsu = new Set(shuntsuMelds.map(m => normalizeTile(m.tiles[0])[1]));
+            for (const s of suitsInShuntsu) {
+                const suitShuntsu = shuntsuMelds.filter(m => normalizeTile(m.tiles[0])[1] === s);
+                const starts = new Set(suitShuntsu.map(m => parseInt(normalizeTile(m.tiles.sort(tileSort)[0])[0])));
+                if (starts.has(1) && starts.has(4) && starts.has(7)) {
+                    yaku.push({ name: "一気通貫", han: isMenzen ? 2 : 1 });
+                    break;
+                }
+            }
+            
+            const shuntsuGroups = shuntsuMelds.reduce((acc, m) => {
+                const startNum = normalizeTile(m.tiles.sort(tileSort)[0])[0];
+                if (!acc[startNum]) acc[startNum] = new Set();
+                acc[startNum].add(normalizeTile(m.tiles[0])[1]);
+                return acc;
+            }, {});
+            for (const num in shuntsuGroups) {
+                if (shuntsuGroups[num].size === 3) {
+                    yaku.push({ name: "三色同順", han: isMenzen ? 2 : 1 });
+                    break;
+                }
             }
         }
-        
-        // 三色同順
-        const shuntsuGroups = shuntsuMelds.reduce((acc, m) => {
-            const meldTiles = m.tiles || m;
-            const startNum = normalizeTile(meldTiles.sort(tileSort)[0])[0];
-            if (!acc[startNum]) acc[startNum] = new Set();
-            acc[startNum].add(normalizeTile(meldTiles[0])[1]);
+    }
+    
+    if (winForm.numMelds >= 3) { // 最低3面子必要
+        const kotsuGroups = kotsuKanMelds.reduce((acc, m) => {
+            const tile = m.tiles[0];
+            if (isNumberTile(tile)) {
+                const norm_tile = normalizeTile(tile);
+                const num = norm_tile[0];
+                if (!acc[num]) acc[num] = new Set();
+                acc[num].add(norm_tile[1]);
+            }
             return acc;
         }, {});
-        for (const num in shuntsuGroups) {
-            if (shuntsuGroups[num].size === 3) {
-                yaku.push({ name: "三色同順", han: isMenzen ? 2 : 1 });
+        for (const num in kotsuGroups) {
+            if (kotsuGroups[num].size === 3) {
+                yaku.push({ name: "三色同刻", han: 2 });
                 break;
             }
         }
     }
     
-    // 三色同刻
-    const kotsuGroups = kotsuKanMelds.reduce((acc, m) => {
-        const tile = (m.tiles || m)[0];
-        if (isNumberTile(tile)) {
-            const norm_tile = normalizeTile(tile);
-            const num = norm_tile[0];
-            if (!acc[num]) acc[num] = new Set();
-            acc[num].add(norm_tile[1]);
-        }
-        return acc;
-    }, {});
-    for (const num in kotsuGroups) {
-        if (kotsuGroups[num].size === 3) {
-            yaku.push({ name: "三色同刻", han: 2 });
-            break;
-        }
-    }
-    
-    // 小三元
-    const dragonJanto = ["白", "発", "中"].includes(normalizeTile(winForm.janto));
-    if (dragonKotsu.length === 2 && dragonJanto) {
+    if (dragonKotsu.length === 2 && winForm.janto && ["白", "発", "中"].includes(normalizeTile(winForm.janto)) && winForm.numMelds >=2) {
         yaku.push({ name: "小三元", han: 2 });
     }
 
-    if (kotsuKanMelds.length === 4) yaku.push({ name: "対々和", han: 2 });
-    if (ankoMelds.length === 3) yaku.push({ name: "三暗刻", han: 2 });
-    if (kanCount === 3) yaku.push({ name: "三槓子", han: 2 });
+    if (kotsuKanMelds.length === winForm.numMelds && winForm.numMelds > 0) yaku.push({ name: "対々和", han: 2 });
+    if (ankoMelds.length === 3 && winForm.numMelds >= 3) yaku.push({ name: "三暗刻", han: 2 });
+    if (kanCount === 3 && winForm.numMelds >= 3) yaku.push({ name: "三槓子", han: 2 });
     
-    // --- Final Calculation ---
-    // 役満が成立していたら他の役は計算しない (再チェック)
-    if (yaku.some(y => y.type === 'yakuman')) {
-        const yakumanYaku = yaku.filter(y => y.type === 'yakuman');
-        return { yakuList: yakumanYaku, totalHan: yakumanYaku.reduce((s, y) => s + y.han, 0), isYakuman: true };
-    }
-    
-    // ドラ計算
-    let doraCount = 0;
-    // 赤ドラ
-    doraCount += allTiles.filter(t => t.startsWith('r5')).length;
-    // 指示牌ドラ
-    dora.forEach(doraValue => {
-        allTiles.forEach(tileInHand => {
-            if (normalizeTile(tileInHand) === doraValue) {
-                doraCount++;
-            }
-        });
+    let uniqueYaku = [];
+    const yakuNames = new Set();
+    yaku.forEach(y => {
+        if (!yakuNames.has(y.name)) {
+            uniqueYaku.push(y);
+            yakuNames.add(y.name);
+        } else if (y.name.startsWith("役牌")) { 
+             uniqueYaku.push(y);
+        }
     });
-    // 裏ドラ
-    if (isRiichi && uraDora) {
-        uraDora.forEach(doraValue => {
-            allTiles.forEach(tileInHand => {
-                if (normalizeTile(tileInHand) === doraValue) {
-                    doraCount++;
-                }
-            });
+    yaku = uniqueYaku;
+    
+    let doraCount = 0;
+    allTiles.forEach(tileInHand => {
+        if (tileInHand.startsWith('r5')) doraCount++;
+        const doraTiles = dora.map(getDoraTile);
+        doraTiles.forEach(d => {
+            if (normalizeTile(tileInHand) === d) doraCount++;
         });
-    }
+        if (isRiichi && uraDora) {
+             const uraDoraTiles = uraDora.map(getDoraTile);
+             uraDoraTiles.forEach(d => {
+                if (normalizeTile(tileInHand) === d) doraCount++;
+            });
+        }
+    });
 
     if (doraCount > 0) yaku.push({ name: "ドラ", han: doraCount });
 
-    // 役がない場合は和了れない（ドラのみは不可）
-    if (!hasValidYaku(yaku)) return { yakuList: [], totalHan: 0 };
+    if (!hasValidYaku(yaku)) return { yakuList: [], totalHan: 0, isYakuman: false };
     
     const totalHan = yaku.reduce((sum, current) => sum + current.han, 0);
     
@@ -469,81 +418,67 @@ function checkYaku(winContext) {
  * @returns {number} 計算された符
  */
 function calculateFu(winForm, yakuList, winContext) {
-    if (!winForm) return 0;
-    if (winForm.form === "七対子") return 25;
+    if (!winForm || winForm.form === "国士無双") return 0;
+    if (winForm.form === "n対子") return 25;
     
     const hasPinfu = yakuList.some(y => y.name === "平和");
     if (hasPinfu && winContext.isTsumo) {
         return 20;
     }
-    if (hasPinfu && !winContext.isTsumo) { //ロン平和
+    if (hasPinfu && !winContext.isTsumo) {
         return 30; 
     }
 
-    let fu = 20; // 副底
+    let fu = 20;
 
-    // 和了方による符
-    if (winContext.isTsumo) {
-        if (!hasPinfu) fu += 2;
+    if (winContext.isTsumo && !hasPinfu) {
+        fu += 2;
     }
-    else if (winContext.furo.length === 0) fu += 10; // 門前ロン
+    if (!winContext.isTsumo && winContext.furo.length === 0) {
+         fu += 10;
+    }
 
-    // 面子による符
-    const allMelds = [...(winForm.melds || []), ...winContext.furo];
+    const allMelds = [...(winForm.melds || []).map(m => ({tiles: m, type:'anko'})), ...winContext.furo];
     allMelds.forEach(meld => {
-        const meldTiles = Array.isArray(meld) ? meld : meld.tiles;
+        const meldTiles = meld.tiles;
         const tile = meldTiles[0];
         const isYao = isYaochu(tile);
         
         if (isKotsu(meldTiles)) {
-            const isAn = isAnko(meld, winContext);
-            fu += (isAn ? 8 : 4) * (isYao ? 2 : 1);
+            const anko = isAnko(meld, winContext);
+            fu += (anko ? 8 : 4) * (isYao ? 2 : 1);
         } else if (meld.type && meld.type.includes('kan')) {
             const isAnKan = meld.type === 'ankan';
-             // 搶槓された加槓は明槓扱い
-            const isStolenKakan = winContext.isChankan && meld.type === 'kakan';
-            fu += (isAnKan && !isStolenKakan ? 32 : 16) * (isYao ? 2 : 1);
+            fu += (isAnKan ? 32 : 16) * (isYao ? 2 : 1);
         }
     });
 
-    // 雀頭による符
-    if (isYakuhai(winForm.janto, winContext.bakaze, winContext.jikaze)) {
-         fu += 2;
-         // 連風牌
-         if (winContext.bakaze === winContext.jikaze && normalizeTile(winForm.janto) === winContext.bakaze) {
-            fu += 2;
-         }
-    } else if (["白", "発", "中"].includes(normalizeTile(winForm.janto))) {
-        fu += 2;
-    }
-
-
-    // 待ちの符（ペンチャン、カンチャン、単騎待ち）
-    if (winForm.janto === winContext.winTile) { // 単騎待ち
-        fu += 2;
-    } else {
-        const waitMeld = winForm.melds.find(m => m.includes(winContext.winTile));
-        if (waitMeld && isShuntsu(waitMeld)) {
-            const sorted = waitMeld.map(normalizeTile).sort(tileSort);
-            const firstNum = parseInt(sorted[0][0]);
-            const winNum = parseInt(normalizeTile(winContext.winTile)[0]);
-
-            // カンチャン待ち: 和了牌が真ん中
-            if (sorted[1] === normalizeTile(winContext.winTile)) fu += 2;
-            // ペンチャン待ち: 3か7の和了
-            else if ((firstNum === 1 && winNum === 3) || (firstNum === 7 && winNum === 7)) fu += 2;
+    if (winForm.janto) {
+        const jantoNorm = normalizeTile(winForm.janto);
+        if (isYakuhai(jantoNorm, winContext.bakaze, winContext.jikaze)) fu += 2;
+        if (jantoNorm === winContext.bakaze && jantoNorm === winContext.jikaze) fu += 2; // 連風対子
+        
+        const winTileNorm = normalizeTile(winContext.winTile);
+        if (jantoNorm === winTileNorm) {
+            fu += 2; // 単騎待ち
+        } else {
+            const waitMeld = (winForm.melds || []).find(m => m.some(t => normalizeTile(t) === winTileNorm));
+            if (waitMeld) {
+                if (isShuntsu(waitMeld)) {
+                    const sorted = waitMeld.map(normalizeTile).sort(tileSort);
+                    if (sorted[1] === winTileNorm) fu += 2; // 嵌張
+                    else if ((parseInt(sorted[0][0]) === 1 && winTileNorm === sorted[2]) || (parseInt(sorted[2][0]) === 9 && winTileNorm === sorted[0])) {
+                        fu += 2; // 辺張
+                    }
+                }
+            }
         }
     }
     
-    // 食い平和形で符がない場合
     if (winContext.furo.length > 0 && fu === 20) {
         return 30;
     }
     
-    // 符が0になることはない
-    if (fu === 20 && !winContext.isTsumo) return 30; // 門前ロン平和は30符
-    if (fu === 22) return 30; // ツモのみの2符は切り上げ
-
     return Math.ceil(fu / 10) * 10;
 }
 
@@ -561,12 +496,12 @@ function calculateScore(han, fu, isDealer, isTsumo) {
         const name = yakumanCount > 1 ? `${yakumanCount}倍役満` : "役満";
         const singleYakuman = isDealer ? 48000 : 32000;
         const total = singleYakuman * yakumanCount;
-        const payments = isDealer ? [total / 3] : [singleYakuman * yakumanCount / 2, singleYakuman * yakumanCount / 4];
-        return { total, payments, name };
+        const payments = isTsumo ? (isDealer ? [total / 3] : [singleYakuman * yakumanCount / 2, singleYakuman * yakumanCount / 4]) : [total];
+        return { total, payments: payments.map(p => Math.ceil(p / 100) * 100), name };
     }
-    if (han >= 11) return isDealer ? { total: 36000, payments: [12000], name: "三倍満", breakdown: "12000オール" } : { total: 24000, payments: [12000, 6000], name: "三倍満", breakdown: "6000/12000" };
-    if (han >= 8) return isDealer ? { total: 24000, payments: [8000], name: "倍満", breakdown: "8000オール" } : { total: 16000, payments: [8000, 4000], name: "倍満", breakdown: "4000/8000" };
-    if (han >= 6) return isDealer ? { total: 18000, payments: [6000], name: "跳満", breakdown: "6000オール" } : { total: 12000, payments: [6000, 3000], name: "跳満", breakdown: "3000/6000" };
+    if (han >= 11) return isDealer ? { total: 36000, payments: isTsumo ? [12000] : [36000], name: "三倍満", breakdown: isTsumo ? "12000オール" : "" } : { total: 24000, payments: isTsumo ? [12000, 6000] : [24000], name: "三倍満", breakdown: isTsumo ? "6000/12000" : "" };
+    if (han >= 8) return isDealer ? { total: 24000, payments: isTsumo ? [8000] : [24000], name: "倍満", breakdown: isTsumo ? "8000オール" : "" } : { total: 16000, payments: isTsumo ? [8000, 4000] : [16000], name: "倍満", breakdown: isTsumo ? "4000/8000" : "" };
+    if (han >= 6) return isDealer ? { total: 18000, payments: isTsumo ? [6000] : [18000], name: "跳満", breakdown: isTsumo ? "6000オール" : "" } : { total: 12000, payments: isTsumo ? [6000, 3000] : [12000], name: "跳満", breakdown: isTsumo ? "3000/6000" : "" };
     
     let basePoint = fu * Math.pow(2, 2 + han);
     
@@ -574,13 +509,11 @@ function calculateScore(han, fu, isDealer, isTsumo) {
         basePoint = 2000; // 満貫
         const name = "満貫";
         if (isDealer) {
-            return isTsumo 
-                ? { total: 12000, payments: [4000], name, breakdown: "4000オール" }
-                : { total: 12000, payments: [12000], name };
+            const total = 12000;
+            return { total, payments: isTsumo ? [total/3] : [total], name, breakdown: isTsumo ? "4000オール" : "" };
         } else {
-             return isTsumo 
-                ? { total: 8000, payments: [4000, 2000], name, breakdown: "2000/4000" } 
-                : { total: 8000, payments: [8000], name };
+            const total = 8000;
+            return { total, payments: isTsumo ? [total/2, total/4] : [total], name, breakdown: isTsumo ? "2000/4000" : "" };
         }
     }
     
@@ -589,7 +522,7 @@ function calculateScore(han, fu, isDealer, isTsumo) {
     if (isDealer) { // 親
         if (isTsumo) {
             const payment = ceilTo100(basePoint * 2);
-            return { total: payment * 3, payments: [payment], breakdown: `${payment}オール` };
+            return { total: payment * 3, payments: [payment, payment], breakdown: `${payment}オール` };
         } else { //ロン
             const payment = ceilTo100(basePoint * 6);
             return { total: payment, payments: [payment] };
@@ -611,63 +544,40 @@ function isAnko(meld, winContext) {
     if (!meld) return false;
     const { isTsumo, winTile } = winContext;
     
-    // 副露の場合
-    if (meld.type) {
-        if (meld.type === 'ankan') return true;
-        // 搶槓された加槓は明槓扱い
-        if (winContext.isChankan && meld.type === 'kakan') return false;
-        return false;
-    }
+    if (meld.type === 'ankan') return true;
+    if (meld.type === 'kakan' && winContext.isChankan) return false;
+    if (meld.type === 'pon' || meld.type === 'daiminkan' || meld.type === 'chi') return false;
 
-    // 手牌内の面子の場合 (配列)
-    const meldTiles = meld;
+    const meldTiles = meld.tiles;
+    if (!meldTiles) return false;
+
     if (!isKotsu(meldTiles)) return false;
-    // ツモ和了なら、全ての刻子は暗刻
     if (isTsumo) return true;
-    // ロン和了の場合、和了牌を含まない刻子は暗刻
-    return !meldTiles.includes(winTile);
+    
+    const normWinTile = normalizeTile(winTile);
+    const normMeldTiles = meldTiles.map(normalizeTile);
+    return !normMeldTiles.includes(normWinTile);
 }
 
 function hasValidYaku(yakuList) {
-    // ドラ以外の役が1つでもあればOK
-    return yakuList.some(y => y.name !== "ドラ" && y.type !== "yakuman_part");
+    return yakuList.some(y => y.name !== "ドラ");
 }
-function isNumberTile(t){return t && (t.match(/^\d[mps]$/) || t.match(/^r5[mps]$/))}
-function isJi(t){return t && ["東","南","西","北","白","発","中"].includes(t)}
-function isYaochu(t){if(isJi(t)) return true; if(!isNumberTile(t)) return false; const num = normalizeTile(t)[0]; return num === '1' || num === '9'}
-function isRoutouhai(t) { return isNumberTile(t) && (normalizeTile(t)[0] === "1" || normalizeTile(t)[0] === "9"); }
-function isKotsu(m){return m.length===3&&normalizeTile(m[0])===normalizeTile(m[1])&&normalizeTile(m[1])===normalizeTile(m[2])}
-function isShuntsu(m){if(m.length!==3) return false; const norm = m.map(normalizeTile).sort(tileSort); if(!isNumberTile(norm[0])) return false; const e=parseInt(norm[0][0]),n=parseInt(norm[1][0]),s=parseInt(norm[2][0]),i=norm[0][1];return n===e+1&&s===e+2&&norm[1][1]===i&&norm[2][1]===i}
-function isKan(m){return m.length===4&&normalizeTile(m[0])===normalizeTile(m[1])&&normalizeTile(m[1])===normalizeTile(m[2])&&normalizeTile(m[2])===normalizeTile(m[3])}
-function isYakuhai(t,e,n){const norm_t = normalizeTile(t); const yakuhaiFanpai = ["白","発","中"]; return yakuhaiFanpai.includes(norm_t) || norm_t === e || norm_t === n; }
-function isRyanmenWait(winForm,winTile){if(!winForm||winForm.form!=="4面子1雀頭"||winForm.janto===winTile)return!1;const targetMeld=winForm.melds.find(m=>isShuntsu(m)&&m.includes(winTile));if(!targetMeld)return!1;const sortedNormMeld=[...targetMeld].map(normalizeTile).sort(tileSort);const normWinTile = normalizeTile(winTile);const firstNum = parseInt(sortedNormMeld[0][0]); return (normWinTile===sortedNormMeld[0]&&firstNum<8)||(normWinTile===sortedNormMeld[2]&&firstNum>1)}
+function isKotsu(m){ if(!m || m.length<3) return false; const normTiles = m.map(normalizeTile); return normTiles[0]===normTiles[1]&&normTiles[1]===normTiles[2]}
+function isShuntsu(m){if(!m || m.length!==3) return false; const norm = m.map(normalizeTile).sort(tileSort); if(!isNumberTile(norm[0])) return false; const e=parseInt(norm[0][0]),n=parseInt(norm[1][0]),s=parseInt(norm[2][0]),i=norm[0][1];return n===e+1&&s===e+2&&norm[1][1]===i&&norm[2][1]===i}
+function isKan(m){return m && m.length===4&&normalizeTile(m[0])===normalizeTile(m[1])&&normalizeTile(m[1])===normalizeTile(m[2])&&normalizeTile(m[2])===normalizeTile(m[3])}
+function isYakuhai(t,e,n){if(!t) return false; const norm_t = normalizeTile(t); const yakuhaiFanpai = ["白","発","中"]; return yakuhaiFanpai.includes(norm_t) || norm_t === e || norm_t === n; }
+function isRyanmenWait(winForm,winTile){if(!winForm||winForm.form!=="n面子1雀頭"||!winForm.janto||winForm.janto===winTile)return!1;const targetMeld=(winForm.melds || []).find(m=>isShuntsu(m)&&m.some(t => normalizeTile(t) === normalizeTile(winTile)));if(!targetMeld)return!1;const sortedNormMeld=[...targetMeld].map(normalizeTile).sort(tileSort);const normWinTile = normalizeTile(winTile);const firstNum = parseInt(sortedNormMeld[0][0]); return (normWinTile===sortedNormMeld[0]&&firstNum<7)||(normWinTile===sortedNormMeld[2]&&firstNum>1)}
 
 function getDoraTile(indicator){if(!indicator)return null; const normIndicator = normalizeTile(indicator); if(!isNumberTile(normIndicator)){const order=["東","南","西","北","東"];const jiOrder=["白","発","中","白"];if(order.includes(normIndicator))return order[order.indexOf(normIndicator)+1];if(jiOrder.includes(normIndicator))return jiOrder[jiOrder.indexOf(normIndicator)+1];return null}const num=parseInt(normIndicator[0]);const suit=normIndicator[1];return(num===9?1:num+1)+suit}
 
-/**
- * 聴牌の待ち牌を返す (リーチ判定用)
- * @param {string[]} hand - 手牌 (13枚)
- * @param {object[]} furo - 副露
- * @returns {string[]} 待ち牌の配列
- */
 function getWaits(hand, furo = []) {
-    if (hand.length % 3 !== 1) return [];
+    if (hand.length === 0 && furo.length === 0) return [];
     
-    // ブラウザ環境ではグローバルスコープのcreateAllTilesを、Node.jsでは上でrequireしたものを参照
-    const allPossibleTiles = (typeof createAllTiles !== 'undefined' ? createAllTiles(1) : require('./constants.js').createAllTiles(1)).filter((v, i, a) => a.indexOf(v) === i); 
+    // 全てのユニークな牌のリストを作成 (赤ドラはノーマルとして扱う)
+    const allPossibleTilesNorm = ["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","2p","3p","4p","5p","6p","7p","8p","9p","1s","2s","3s","4s","5s","6s","7s","8s","9s","東","南","西","北","白","発","中"];
     const waits = new Set();
-    const handCounts = hand.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
-    const furoTiles = furo.flatMap(f => f.tiles);
-
-    for (const tile of allPossibleTiles) {
-        // 既に4枚見えている牌は待てない
-        const totalInGameNorm = normalizeTile(tile);
-        let totalCountInGame = 0;
-        hand.forEach(h => { if(normalizeTile(h) === totalInGameNorm) totalCountInGame++; });
-        furoTiles.forEach(f => { if(normalizeTile(f) === totalInGameNorm) totalCountInGame++; });
-        
-        if (totalCountInGame >= 4) continue;
-        
+    
+    for (const tile of allPossibleTilesNorm) {
         const tempHand = [...hand, tile];
         if (getWinningForm(tempHand, furo)) {
             waits.add(tile);
@@ -676,7 +586,6 @@ function getWaits(hand, furo = []) {
     return Array.from(waits).sort(tileSort);
 }
 
-// Node.jsのモジュールとしてエクスポート
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getWinningForm, findMelds, checkYaku, calculateFu, calculateScore, getWaits, hasValidYaku, isNumberTile, isYaochu, isKotsu, isShuntsu, isKan, isYakuhai, isRyanmenWait, isAnko, getDoraTile };
+    module.exports = { normalizeTile, getWinningForm, findMelds, checkYaku, calculateFu, calculateScore, getWaits, hasValidYaku, isNumberTile, isYaochu, isJi, isKotsu, isShuntsu, isKan, isYakuhai, isRyanmenWait, isAnko, getDoraTile };
 }

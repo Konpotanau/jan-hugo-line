@@ -3,20 +3,15 @@ let gameState = null;
 let myPlayerIndex = -1;
 let isGameStarted = false;
 
-// WebSocketサーバーのURLを決定する
 const getWebSocketURL = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const host = window.location.host;
-  // HTTPまたはHTTPSでアクセスされている場合
   if (window.location.protocol.startsWith('http')) {
-    // RenderなどのPaaS環境では、WebサーバーとWebSocketサーバーが同じホスト・ポートを共有します
     return `${protocol}://${host}`;
   }
-  // ローカルファイルとして開かれている場合 (開発用)
-  return 'ws://localhost:3000'; // server.jsのデフォルトポート
+  return 'ws://localhost:3000';
 };
 
-// サーバー接続
 const socket = new WebSocket(getWebSocketURL());
 
 const startWithCpuBtn = document.getElementById('start-cpu-btn');
@@ -34,7 +29,10 @@ socket.onopen = function(event) {
 socket.onmessage = function(event) {
     const data = JSON.parse(event.data);
 
-    if (data.type !== 'round_result') resultModalEl.style.display = 'none';
+    if (data.type !== 'round_result') {
+         const existingModal = document.getElementById('result-modal');
+         if(existingModal) existingModal.style.display = 'none';
+    }
 
     switch (data.type) {
         case 'player_assignment':
@@ -42,20 +40,30 @@ socket.onmessage = function(event) {
             console.log(`あなたは Player ${myPlayerIndex} です。`);
             break;
         case 'update':
-            if (!isGameStarted && data.state.gameStarted) {
-                isGameStarted = true;
-                startWithCpuBtn.style.display = 'none';
+            if (data.state && myPlayerIndex !== -1) {
+                if (!isGameStarted && data.state.gameStarted) {
+                    isGameStarted = true;
+                    startWithCpuBtn.style.display = 'none';
+                }
+                gameState = data.state;
+                isGameStarted = gameState.gameStarted; // Update game status
+                renderAll(gameState, myPlayerIndex, handlePlayerDiscard, sendAction);
             }
-            gameState = data.state;
-            renderAll(gameState, myPlayerIndex, handlePlayerDiscard, sendAction);
             break;
         case 'round_result':
-            isGameStarted = false; // ラウンド終了で一旦フラグを倒す
+            isGameStarted = false;
             displayRoundResult(data.result, myPlayerIndex);
             break;
         case 'system_message':
-             infoEl.textContent = data.message;
-             break;
+            const msg = data.message;
+            if (typeof msg === 'object' && msg.type === 'nanawatashi_event') {
+                showNanaWatashiNotification(msg, myPlayerIndex);
+                // Update the general info text for all players
+                infoEl.textContent = `P${msg.from + 1}がP${msg.to + 1}に牌を渡しました。`;
+            } else {
+                infoEl.textContent = msg;
+            }
+            break;
         case 'error':
             alert(data.message);
             break;
@@ -75,8 +83,17 @@ socket.onerror = function(error) {
     infoEl.textContent = "サーバーとの接続に問題が発生しました。";
 };
 
-// サーバーに打牌情報を送信
 function handlePlayerDiscard(tile) {
+    if (!gameState || !isGameStarted) return;
+    
+    const pa = gameState.pendingSpecialAction;
+    // If in the 'kyusute' special action state, send the discard as a special action.
+    if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute') {
+        sendAction({ type: 'kyusute_discard', tile: tile });
+        return;
+    }
+    
+    // Standard turn discard validation.
     if (gameState.turnIndex !== myPlayerIndex) return;
 
     if (gameState.isRiichi[myPlayerIndex] && tile !== gameState.drawnTile) {
@@ -86,8 +103,8 @@ function handlePlayerDiscard(tile) {
     socket.send(JSON.stringify({ type: 'discard', tile: tile }));
 }
 
-// サーバーにアクション（ポン、チー、カンなど）を送信
 function sendAction(action) {
+    if (!gameState || !isGameStarted) return;
     socket.send(JSON.stringify({ type: 'action', action: action }));
     hideActionButtons();
 }

@@ -1,6 +1,6 @@
 // game-manager.js
 const { createAllTiles, shuffle, tileSort } = require('./constants.js');
-const { getWaits, checkYaku, getWinningForm, calculateFu, calculateScore, hasValidYaku, isYaochu, getDoraTile, isYakuhai, isNumberTile } = require('./yaku.js');
+const { getWaits, checkYaku, getWinningForm, calculateFu, calculateScore, hasValidYaku, isYaochu, isJi, getDoraTile, isYakuhai, isNumberTile, normalizeTile } = require('./yaku.js');
 
 class Game {
     constructor(players, callbacks) {
@@ -23,6 +23,9 @@ class Game {
             };
         }
         
+        this.state.roundKans = 0;
+        this.state.isRevolution = false;
+        
         this.state.hands = [[], [], [], []];
         this.state.furos = [[], [], [], []];
         this.state.discards = [[], [], [], []];
@@ -35,9 +38,9 @@ class Game {
         this.state.drawnTile = null;
         this.state.lastKanContext = null;
         this.state.pendingKakan = null;
-        // ★ ターンごとのタイマー情報を追加
+        this.state.pendingSpecialAction = null;
         this.state.turnTimer = null;
-        this.state.lastDiscard = null; // 最後の捨て牌情報を初期化
+        this.state.lastDiscard = null;
     
         const winds = ["東", "南", "西", "北"];
         this.state.jikazes = winds.map((_, i) => winds[(i - this.state.oyaIndex + 4) % 4]);
@@ -74,7 +77,7 @@ class Game {
     
         const isCpu = this.players.some(p => p.playerIndex === playerIndex && p.isCpu);
         if (isCpu) {
-            setTimeout(() => this.handleCpuTurn(playerIndex), 1000);
+            setTimeout(() => this.handleCpuTurn(playerIndex), 100 + Math.random() * 1000); 
         }
     }
 
@@ -93,9 +96,8 @@ class Game {
             this.state.lastKanContext = { rinshanWinner: playerIndex };
         }
     
-        console.log(`Player ${playerIndex} がツモりました。残り牌山: ${this.state.yama.length}枚`);
+        console.log(`Player ${playerIndex} がツモりました: ${drawnTile}。残り牌山: ${this.state.yama.length}枚`);
         
-        // ★ ターンタイマーを設定
         const DISCARD_TIMEOUT_MS = 15000;
         if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
         this.state.turnTimer = {
@@ -108,17 +110,37 @@ class Game {
         this.callbacks.onUpdate();
     }
     
-    // ★ タイムアウト時にツモ切りまたは手動で打牌する処理を修正
     handleAutoDiscard(playerIndex) {
-        if (this.state.turnIndex !== playerIndex) {
+        if (this.state.turnIndex !== playerIndex && !(this.state.pendingSpecialAction && this.state.pendingSpecialAction.playerIndex === playerIndex)) {
             return; 
         }
+        
+        if (this.state.pendingSpecialAction) {
+             const pa = this.state.pendingSpecialAction;
+             if (pa.type === 'nanawatashi') {
+                 console.log(`Player ${playerIndex} (7わたし) timed out.`);
+                 this.callbacks.onSystemMessage("7わたしの選択がタイムアウトしました。");
+                 this.state.pendingSpecialAction = null;
+                 this.proceedToNextTurn(this.state.turnIndex, this.state.lastDiscard?.tile);
+             } else if (pa.type === 'kyusute') {
+                 console.log(`Player ${playerIndex} (9捨て) timed out. Auto-discarding.`);
+                 const hand = this.state.hands[playerIndex];
+                 if (hand && hand.length > 0) {
+                    const tileToDiscard = this.state.hands[playerIndex][this.state.hands[playerIndex].length - 1];
+                    this.handlePlayerAction(playerIndex, { type: 'kyusute_discard', tile: tileToDiscard });
+                 } else {
+                    this.state.pendingSpecialAction = null;
+                    this.proceedToNextTurn(this.state.turnIndex, this.state.lastDiscard?.tile);
+                 }
+             }
+            return;
+        }
 
-        // ツモ牌があればそれを、なければ（鳴きの後など）手牌の最後の牌を捨てる
         const tileToDiscard = this.state.drawnTile || this.state.hands[playerIndex][this.state.hands[playerIndex].length - 1];
 
         if (!tileToDiscard) {
             console.error(`Player ${playerIndex} timed out, but no tile to discard.`);
+            this.proceedToNextTurn(playerIndex, null);
             return;
         }
 
@@ -128,9 +150,16 @@ class Game {
 
 
     handleDiscard(playerIndex, tile) {
+        if (!this.state.gameStarted) return;
         if (this.state.turnIndex !== playerIndex) return;
 
-        // ★ 打牌時にターンタイマーをクリア
+        // 9捨ての2枚目の打牌処理
+        const pa = this.state.pendingSpecialAction;
+        if(pa && pa.type === 'kyusute' && pa.playerIndex === playerIndex) {
+             this.handlePlayerAction(playerIndex, { type: 'kyusute_discard', tile: tile });
+             return;
+        }
+
         if (this.state.turnTimer) {
             clearTimeout(this.state.turnTimer.timeout);
             this.state.turnTimer = null;
@@ -160,11 +189,9 @@ class Game {
 
         this.state.discards[playerIndex].push(discardObject);
         
-        // ★★★ ここで最新の捨て牌情報を記録 ★★★
         this.state.lastDiscard = { 
             player: playerIndex, 
             tile: tile,
-            // 各プレイヤーの捨て牌配列内でのインデックスも記録
             discardIndex: this.state.discards[playerIndex].length - 1 
         };
     
@@ -178,13 +205,13 @@ class Game {
         if (this.state.discards.every(d => d.length === 1)) {
             const firstDiscards = this.state.discards.map(d => d[0].tile);
             if ( /^[東西南北]$/.test(firstDiscards[0]) && firstDiscards.every(t => t === firstDiscards[0])) {
-                setTimeout(() => this.handleDraw('suufon_renda'), 500);
+                setTimeout(() => this.handleDraw('suufon_renda'), 100);
                 return;
             }
         }
     
         if (isRiichiDeclare && this.state.isRiichi.filter(Boolean).length === 4) {
-            setTimeout(() => this.handleDraw('suucha_riichi'), 500);
+            setTimeout(() => this.handleDraw('suucha_riichi'), 100);
             return;
         }
 
@@ -193,7 +220,8 @@ class Game {
         console.log(`Player ${playerIndex} が ${tile} を捨てました。`);
         
         this.state.turnActions = null;
-        this.checkForActionsAfterDiscard(playerIndex, tile, false);
+        const canTriggerSpecialRule = !this.state.isRiichi[playerIndex];
+        this.checkForActionsAfterDiscard(playerIndex, tile, false, canTriggerSpecialRule);
     }
 
     checkForTurnActions(playerIndex) {
@@ -211,10 +239,12 @@ class Game {
         }
     
         const isMenzen = furo.length === 0;
+
         if (isMenzen && !this.state.isRiichi[playerIndex] && this.state.scores[playerIndex] >= 1000 && this.state.yama.length >= 4 && !this.state.isFuriten[playerIndex] && !this.state.temporaryFuriten[playerIndex]) {
             for (const tileToDiscard of new Set(hand)) {
                 const tempHand = [...hand];
-                tempHand.splice(tempHand.indexOf(tileToDiscard), 1);
+                if(tempHand.length === 0) continue;
+                tempHand.splice(tempHand.lastIndexOf(tileToDiscard), 1);
                 if (getWaits(tempHand, []).length > 0) {
                     actions.canRiichi = true;
                     break;
@@ -235,8 +265,12 @@ class Game {
         if (!this.state.isRiichi[playerIndex]) {
             const handCounts = hand.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
             furo.forEach(f => {
-                if (f.type === 'pon' && handCounts[f.tiles[0]]) {
-                    actions.canKakan.push(f.tiles[0]);
+                if (f.type === 'pon') {
+                    const normTile = normalizeTile(f.tiles[0]);
+                    const hasTileForKakan = hand.some(t => normalizeTile(t) === normTile);
+                    if(hasTileForKakan) {
+                        actions.canKakan.push(f.tiles[0]);
+                    }
                 }
             });
             for (const tile in handCounts) {
@@ -253,14 +287,11 @@ class Game {
         }
     }
 
-    checkForActionsAfterDiscard(discarderIndex, tile, isKakan = false) {
+    checkForActionsAfterDiscard(discarderIndex, tile, isKakan = false, canTriggerSpecialRule = true) {
         const possibleActions = [null, null, null, null];
         let canAnyoneAct = false;
         let hasPriorityAction = false; 
     
-        if (!isKakan) {
-        }
-
         for (let i = 0; i < 4; i++) {
             if (i === discarderIndex) continue;
             
@@ -290,17 +321,44 @@ class Game {
             }
     
             if (!isKakan && !this.state.isRiichi[i]) {
-                if (hand.filter(t => t === tile).length >= 2) playerActions.canPon = true;
-                if (hand.filter(t => t === tile).length >= 3) playerActions.canDaiminkan = true;
+                const normTile = normalizeTile(tile);
+                const sameTilesInHand = hand.filter(t => normalizeTile(t) === normTile);
+                if (sameTilesInHand.length >= 2) playerActions.canPon = true;
+                if (sameTilesInHand.length >= 3) playerActions.canDaiminkan = true;
         
-                if (i === (discarderIndex + 1) % 4 && /^[1-9][mps]$/.test(tile)) {
-                    const num = parseInt(tile[0]);
-                    const suit = tile[1];
-                    const counts = hand.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+                if (i === (discarderIndex + 1) % 4 && isNumberTile(tile)) {
+                    const num = parseInt(normalizeTile(tile)[0]);
+                    const suit = normalizeTile(tile)[1];
+                    const handNormCounts = hand.reduce((acc, t) => {
+                        const norm = normalizeTile(t);
+                        if (!acc[norm]) acc[norm] = [];
+                        acc[norm].push(t);
+                        return acc;
+                    }, {});
         
-                    if (num > 2 && counts[`${num-2}${suit}`] && counts[`${num-1}${suit}`]) playerActions.canChi.push([`${num-2}${suit}`, `${num-1}${suit}`]);
-                    if (num > 1 && num < 9 && counts[`${num-1}${suit}`] && counts[`${num+1}${suit}`]) playerActions.canChi.push([`${num-1}${suit}`, `${num+1}${suit}`]);
-                    if (num < 8 && counts[`${num+1}${suit}`] && counts[`${num+2}${suit}`]) playerActions.canChi.push([`${num+1}${suit}`, `${num+2}${suit}`]);
+                    const findTiles = (nums) => {
+                        const tempCounts = JSON.parse(JSON.stringify(handNormCounts));
+                        const result = [];
+                        for(const n of nums) {
+                            const key = `${n}${suit}`;
+                            if(!tempCounts[key] || tempCounts[key].length === 0) return null;
+                            result.push(tempCounts[key].pop());
+                        }
+                        return result;
+                    };
+
+                    if (num > 2) {
+                       const meld = findTiles([num - 2, num - 1]);
+                       if (meld) playerActions.canChi.push(meld);
+                    }
+                    if (num > 1 && num < 9) {
+                       const meld = findTiles([num - 1, num + 1]);
+                       if (meld) playerActions.canChi.push(meld);
+                    }
+                    if (num < 8) {
+                       const meld = findTiles([num + 1, num + 2]);
+                       if (meld) playerActions.canChi.push(meld);
+                    }
                 }
             }
             
@@ -313,58 +371,178 @@ class Game {
     
         if (canAnyoneAct) {
             const ACTION_TIMEOUT_MS = hasPriorityAction ? 10000 : 5000;
-            // ★★★ 修正箇所: waitingForActionにtimer情報を追加 ★★★
             this.state.waitingForAction = { 
                 discarderIndex, 
                 tile, 
                 possibleActions, 
                 responses: {}, 
-                timer: { // timer情報をまとめる
+                timer: {
                     startTime: Date.now(),
                     duration: ACTION_TIMEOUT_MS,
                 },
                 actionTimeout: setTimeout(() => this.handleResponseToAction(null, {type: 'timeout'}), ACTION_TIMEOUT_MS),
             };
 
-            // --- CPU REACTION LOGIC ---
             this.players.forEach(player => {
                 if(player.isCpu && possibleActions[player.playerIndex] && !this.state.waitingForAction.responses[player.playerIndex]){
                     setTimeout(() => {
-                        // Check if action is still available
                         if(this.state.waitingForAction && this.state.waitingForAction.possibleActions[player.playerIndex]){
                              const cpuAction = this.getCpuReaction(player.playerIndex, tile, discarderIndex);
                              this.handleResponseToAction(player.playerIndex, cpuAction);
                         }
-                    }, 500 + Math.random() * 1000); // Add some delay
+                    }, 100 + Math.random() * 1500);
                 }
             });
 
             this.callbacks.onUpdate();
         } else {
+            const isKyusute = tile.match(/^9[mps]$/);
+            const isNanawatashi = tile.match(/^[r]?7[mps]$/);
+            const SPECIAL_ACTION_TIMEOUT_MS = 15000;
+
+            if (canTriggerSpecialRule && isKyusute) {
+                this.state.pendingSpecialAction = { type: 'kyusute', playerIndex: discarderIndex };
+                this.state.turnIndex = discarderIndex; 
+                if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
+                this.state.turnTimer = {
+                    startTime: Date.now(),
+                    duration: SPECIAL_ACTION_TIMEOUT_MS,
+                    timeout: setTimeout(() => this.handleAutoDiscard(discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
+                };
+                console.log(`Player ${discarderIndex} が9捨てを行いました。追加の打牌待ち。`);
+                this.callbacks.onSystemMessage("「9捨て」！もう1枚捨ててください。");
+                this.callbacks.onUpdate();
+                const isCpu = this.players.some(p => p.playerIndex === discarderIndex && p.isCpu);
+                if (isCpu) {
+                    setTimeout(() => this.handleCpuTurn(discarderIndex), 1000 + Math.random() * 100);
+                }
+                return; 
+            }
+            if (canTriggerSpecialRule && isNanawatashi) {
+                this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: discarderIndex };
+                this.state.turnIndex = discarderIndex;
+                if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
+                this.state.turnTimer = {
+                    startTime: Date.now(),
+                    duration: SPECIAL_ACTION_TIMEOUT_MS,
+                    timeout: setTimeout(() => this.handleAutoDiscard(discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
+                };
+                console.log(`Player ${discarderIndex} が7わたしを行いました。選択待ち。`);
+                this.callbacks.onSystemMessage("「7わたし」！渡す牌と相手を選んでください。");
+                this.callbacks.onUpdate();
+                const isCpu = this.players.some(p => p.playerIndex === discarderIndex && p.isCpu);
+                if (isCpu) {
+                    setTimeout(() => this.handleCpuTurn(discarderIndex), 1000 + Math.random() * 100);
+                }
+                return;
+            }
+
             if (this.state.pendingKakan) {
                 this.finalizeKakan();
             } else {
                 this.state.isIppatsu = [false, false, false, false];
-                this.proceedToNextTurn(discarderIndex);
+                this.proceedToNextTurn(discarderIndex, tile);
             }
         }
     }
 
     handlePlayerAction(playerIndex, action) {
-        if (this.state.turnIndex === playerIndex) {
-             // ★ 自分のターンのアクション実行時にタイマーをクリア
-            if (this.state.turnTimer) {
+        if (!this.state.gameStarted) return;
+
+        if (this.state.turnIndex === playerIndex || (this.state.pendingSpecialAction && this.state.pendingSpecialAction.playerIndex === playerIndex)) {
+             if (this.state.turnTimer) {
                 clearTimeout(this.state.turnTimer.timeout);
                 this.state.turnTimer = null;
             }
         }
 
-        if (this.state.isRiichi[playerIndex]) {
+        if (this.state.isRiichi[playerIndex] && this.state.turnIndex === playerIndex) {
             if (action.type === 'tsumo' && this.state.turnActions && this.state.turnActions.canTsumo) {
                 this.handleWin(playerIndex, playerIndex, this.state.drawnTile, true, false);
             }
             return;
         }
+        
+        if (this.state.pendingSpecialAction && this.state.pendingSpecialAction.playerIndex === playerIndex) {
+            const pa = this.state.pendingSpecialAction;
+            if (this.state.isRiichi[playerIndex]) {
+                 console.error("リーチ中は特殊アクションを実行できません。");
+                 return;
+            }
+            if (pa.type === 'kyusute' && action.type === 'kyusute_discard') {
+                console.log(`Player ${playerIndex} が9捨ての2枚目として ${action.tile} を捨てます。`);
+                this.state.pendingSpecialAction = null;
+                this.state.turnIndex = playerIndex; 
+
+                const hand = this.state.hands[playerIndex];
+                const tileIndex = hand.lastIndexOf(action.tile);
+                if (tileIndex === -1) {
+                    console.error("9捨てエラー: 手牌にない牌を捨てようとしました:", action.tile);
+                    this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                    return;
+                }
+                hand.splice(tileIndex, 1);
+                hand.sort(tileSort);
+                
+                const discardObject = { tile: action.tile, isRiichi: false };
+                this.state.discards[playerIndex].push(discardObject);
+                this.state.lastDiscard = { 
+                    player: playerIndex, 
+                    tile: action.tile,
+                    discardIndex: this.state.discards[playerIndex].length - 1 
+                };
+                
+                this.callbacks.onUpdate();
+                setTimeout(() => this.checkForActionsAfterDiscard(playerIndex, action.tile, false, !this.state.isRiichi[playerIndex]), 50);
+                return;
+            }
+            
+            if (pa.type === 'nanawatashi' && action.type === 'nanawatashi_select') {
+                const { tileToGive, targetPlayerIndex } = action;
+
+                if (this.state.isRiichi[targetPlayerIndex]) {
+                    console.error("エラー: リーチ中のプレイヤーに7わたしはできません。");
+                    this.callbacks.onSystemMessage("エラー: リーチ中のプレイヤーには渡せません。");
+                    this.callbacks.onUpdate();
+                    return;
+                }
+                if (playerIndex === targetPlayerIndex) {
+                    console.error("エラー: 自分自身に7わたしはできません。");
+                    this.callbacks.onSystemMessage("エラー: 自分自身には渡せません。");
+                    this.callbacks.onUpdate();
+                    return;
+                }
+
+                const hand = this.state.hands[playerIndex];
+                const tileIndex = hand.indexOf(tileToGive);
+                if (tileIndex > -1) {
+                    const [givenTile] = hand.splice(tileIndex, 1);
+                    this.state.hands[targetPlayerIndex].push(givenTile);
+                    this.state.hands[targetPlayerIndex].sort(tileSort);
+                    
+                    console.log(`Player ${playerIndex} が ${givenTile} を Player ${targetPlayerIndex} に渡しました。`);
+                    this.callbacks.onSystemMessage({
+                        type: 'nanawatashi_event',
+                        from: playerIndex,
+                        to: targetPlayerIndex,
+                        tile: givenTile
+                    });
+
+                    this.state.pendingSpecialAction = null;
+                    
+                    this.callbacks.onUpdate();
+
+                    this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                } else {
+                    console.error("7わたしエラー: 指定された牌が手牌にありません。");
+                    this.callbacks.onSystemMessage("エラー: 渡そうとした牌が手牌にありません。");
+                    this.state.pendingSpecialAction = null;
+                    this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                }
+                return;
+            }
+        }
+
 
         if (this.state.turnActions && this.state.turnIndex === playerIndex) {
             if (action.type === 'tsumo') {
@@ -373,7 +551,6 @@ class Game {
             }
             if (action.type === 'riichi') {
                 this.state.turnActions.isDeclaringRiichi = true;
-                // ★ リーチ宣言時はタイマーをリセットして打牌を待つ
                  const DISCARD_TIMEOUT_MS = 15000;
                  if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
                  this.state.turnTimer = {
@@ -409,15 +586,13 @@ class Game {
         const actingPlayers = this.players.filter(p => wa.possibleActions[p.playerIndex]);
         const respondedPlayers = Object.keys(wa.responses).map(Number);
         
-        // --- TIMEOUT or ALL RESPONDED ---
-        // 人間プレイヤーが全員応答したか、もしくはタイムアウトした場合に処理を進める
-        const humanPlayersWithActions = actingPlayers.filter(p => !p.isCpu);
-        const haveAllHumansResponded = humanPlayersWithActions.every(p => respondedPlayers.includes(p.playerIndex));
+        const allActingPlayersHaveResponded = actingPlayers.every(p => respondedPlayers.includes(p.playerIndex));
 
-        if (action.type === 'timeout' || haveAllHumansResponded) {
-            // タイムアウトしたCPUがいたら、スキップさせる
-            const pendingCpus = actingPlayers.filter(p => p.isCpu && !respondedPlayers.includes(p.playerIndex));
-            pendingCpus.forEach(cpu => wa.responses[cpu.playerIndex] = {type: 'skip'});
+        if (action.type === 'timeout' || allActingPlayersHaveResponded) {
+            if(action.type === 'timeout'){
+                const pendingPlayers = actingPlayers.filter(p => !respondedPlayers.includes(p.playerIndex));
+                pendingPlayers.forEach(p => wa.responses[p.playerIndex] = {type: 'skip'});
+            }
 
             clearTimeout(wa.actionTimeout);
     
@@ -475,10 +650,19 @@ class Game {
                 const actionPlayerIndex = Number(Object.keys(wa.responses).find(pIdx => wa.responses[pIdx] === (ponAction || daiminkanAction)));
                 if (ponAction) {
                     const hand = this.state.hands[actionPlayerIndex];
-                    for(let i=0; i<2; i++) hand.splice(hand.lastIndexOf(wa.tile), 1);
-                    this.state.furos[actionPlayerIndex].push({type: 'pon', tiles: [wa.tile, wa.tile, wa.tile], from: wa.discarderIndex});
+                    const normTile = normalizeTile(wa.tile);
+                    let removedCount = 0;
+                    const ponTiles = [wa.tile];
+
+                    for (let i = hand.length - 1; i >= 0 && removedCount < 2; i--) {
+                        if (normalizeTile(hand[i]) === normTile) {
+                            ponTiles.push(hand[i]);
+                            hand.splice(i, 1);
+                            removedCount++;
+                        }
+                    }
+                    this.state.furos[actionPlayerIndex].push({type: 'pon', tiles: ponTiles.sort(tileSort), from: wa.discarderIndex});
                     
-                    // ★★★ ここから修正 ★★★
                     this.state.turnIndex = actionPlayerIndex;
                     this.state.drawnTile = null;
                     this.state.turnActions = null;
@@ -495,9 +679,8 @@ class Game {
 
                     const isCpu = this.players.some(p => p.playerIndex === actionPlayerIndex && p.isCpu);
                     if (isCpu) {
-                        setTimeout(() => this.handleCpuTurn(actionPlayerIndex), 1000);
+                        setTimeout(() => this.handleCpuTurn(actionPlayerIndex), 1000 + Math.random() * 100);
                     }
-                    // ★★★ ここまで修正 ★★★
 
                 } else { // Daiminkan
                     this.handleKan(actionPlayerIndex, wa.tile, 'daiminkan', wa.discarderIndex);
@@ -505,12 +688,14 @@ class Game {
             } else if (chiAction) {
                 const actionPlayerIndex = Number(Object.keys(wa.responses).find(pIdx => wa.responses[pIdx] === chiAction));
                 const hand = this.state.hands[actionPlayerIndex];
-                chiAction.tiles.forEach(t => hand.splice(hand.indexOf(t), 1));
+                chiAction.tiles.forEach(t => {
+                    const idx = hand.indexOf(t);
+                    if(idx > -1) hand.splice(idx, 1);
+                });
                 
                 const meldTiles = [...chiAction.tiles, wa.tile].sort(tileSort);
                 this.state.furos[actionPlayerIndex].push({type: 'chi', tiles: meldTiles, from: wa.discarderIndex, called: wa.tile});
 
-                // ★★★ ここから修正 ★★★
                 this.state.turnIndex = actionPlayerIndex;
                 this.state.drawnTile = null;
                 this.state.turnActions = null;
@@ -527,16 +712,56 @@ class Game {
 
                 const isCpu = this.players.some(p => p.playerIndex === actionPlayerIndex && p.isCpu);
                 if (isCpu) {
-                    setTimeout(() => this.handleCpuTurn(actionPlayerIndex), 1000);
+                    setTimeout(() => this.handleCpuTurn(actionPlayerIndex), 100 + Math.random() * 1000);
                 }
-                // ★★★ ここまで修正 ★★★
 
             } else {
+                // 鳴かれなかった場合、ここで特殊ルールを再チェック
+                const canTriggerSpecialRule = !this.state.isRiichi[wa.discarderIndex];
+                const isKyusute = wa.tile.match(/^9[mps]$/);
+                const isNanawatashi = wa.tile.match(/^[r]?7[mps]$/);
+                const SPECIAL_ACTION_TIMEOUT_MS = 15000;
+
+                if (canTriggerSpecialRule && isKyusute) {
+                    this.state.pendingSpecialAction = { type: 'kyusute', playerIndex: wa.discarderIndex };
+                    this.state.turnIndex = wa.discarderIndex; // ターンを維持
+                    if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
+                    this.state.turnTimer = {
+                        startTime: Date.now(),
+                        duration: SPECIAL_ACTION_TIMEOUT_MS,
+                        timeout: setTimeout(() => this.handleAutoDiscard(wa.discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
+                    };
+                    console.log(`Player ${wa.discarderIndex} が9捨てを行いました。追加の打牌待ち。`);
+                    this.callbacks.onSystemMessage("「9捨て」！もう1枚捨ててください。");
+                    this.callbacks.onUpdate();
+                    if(this.players.find(p=>p.playerIndex === wa.discarderIndex && p.isCpu)){
+                         setTimeout(() => this.handleCpuTurn(wa.discarderIndex), 100 + Math.random() * 1000);
+                    }
+                    return; 
+                }
+                if (canTriggerSpecialRule && isNanawatashi) {
+                    this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: wa.discarderIndex };
+                    this.state.turnIndex = wa.discarderIndex; // ターンを維持
+                    if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
+                    this.state.turnTimer = {
+                        startTime: Date.now(),
+                        duration: SPECIAL_ACTION_TIMEOUT_MS,
+                        timeout: setTimeout(() => this.handleAutoDiscard(wa.discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
+                    };
+                    console.log(`Player ${wa.discarderIndex} が7わたしを行いました。選択待ち。`);
+                    this.callbacks.onSystemMessage("「7わたし」！渡す牌と相手を選んでください。");
+                    this.callbacks.onUpdate();
+                     if(this.players.find(p=>p.playerIndex === wa.discarderIndex && p.isCpu)){
+                         setTimeout(() => this.handleCpuTurn(wa.discarderIndex), 100 + Math.random() * 1000);
+                    }
+                    return;
+                }
+
                 if (this.state.pendingKakan) {
                     this.finalizeKakan();
                 } else {
                     this.state.isIppatsu = [false, false, false, false];
-                    this.proceedToNextTurn(wa.discarderIndex);
+                    this.proceedToNextTurn(wa.discarderIndex, wa.tile);
                 }
             }
         }
@@ -555,7 +780,14 @@ class Game {
             for (let i = 0; i < 4; i++) hand.splice(hand.lastIndexOf(tile), 1);
             this.state.furos[playerIndex].push({ type: 'ankan', tiles: [tile, tile, tile, tile], from: playerIndex });
         } else if (kanType === 'daiminkan') {
-            for (let i = 0; i < 3; i++) hand.splice(hand.lastIndexOf(tile), 1);
+            const normTile = normalizeTile(tile);
+            let removedCount = 0;
+            for (let i = hand.length - 1; i >= 0 && removedCount < 3; i--) {
+                if (normalizeTile(hand[i]) === normTile) {
+                    hand.splice(i, 1);
+                    removedCount++;
+                }
+            }
             this.state.furos[playerIndex].push({ type: 'daiminkan', tiles: [tile, tile, tile, tile], from: fromIndex });
         }
         
@@ -568,8 +800,14 @@ class Game {
         console.log(`搶槓は発生しませんでした。Player ${playerIndex} の加槓 (${tile}) が成立します。`);
 
         const hand = this.state.hands[playerIndex];
-        hand.splice(hand.indexOf(tile), 1);
-        const furoToUpdate = this.state.furos[playerIndex].find(f => f.type === 'pon' && f.tiles[0] === tile);
+        const normTile = normalizeTile(tile);
+        
+        const kakanTileIndex = hand.findIndex(t => normalizeTile(t) === normTile);
+        if(kakanTileIndex > -1) {
+            hand.splice(kakanTileIndex, 1);
+        }
+
+        const furoToUpdate = this.state.furos[playerIndex].find(f => f.type === 'pon' && normalizeTile(f.tiles[0]) === normTile);
         furoToUpdate.type = 'kakan';
         furoToUpdate.tiles.push(tile);
 
@@ -578,8 +816,19 @@ class Game {
     }
     
     performKanPostActions(playerIndex) {
-        const totalKans = this.state.furos.flat().filter(f => f.type.includes('kan')).length;
-        if (totalKans === 4) {
+        this.state.roundKans++;
+        this.state.isRevolution = (this.state.roundKans % 2) === 1;
+        console.log(`カンが成立しました。この局のカン回数: ${this.state.roundKans}, 革命状態: ${this.state.isRevolution}`);
+        if(this.state.isRevolution){
+            this.callbacks.onSystemMessage("革命！点数計算が反転します。");
+        } else {
+            if (this.state.roundKans > 0 && this.state.roundKans % 2 === 0) {
+                 this.callbacks.onSystemMessage("革命終了。点数計算が元に戻ります。");
+            }
+        }
+
+        const totalKansInRound = this.state.furos.flat().filter(f => f.type.includes('kan')).length;
+        if (totalKansInRound >= 4) {
             const kanMakers = new Set();
             this.state.furos.forEach((playerFuros, pIdx) => {
                 playerFuros.forEach(f => {
@@ -587,7 +836,7 @@ class Game {
                 });
             });
             if (kanMakers.size > 1) {
-                setTimeout(() => this.handleDraw('suukaikan'), 500);
+                setTimeout(() => this.handleDraw('suukaikan'), 100);
                 return;
             }
         }
@@ -604,16 +853,32 @@ class Game {
     }
 
     
-    proceedToNextTurn(lastPlayerIndex) {
+    proceedToNextTurn(lastPlayerIndex, discardedTile) {
         this.state.waitingForAction = null;
-        this.state.turnIndex = (lastPlayerIndex + 1) % 4;
+        this.state.pendingSpecialAction = null; 
+    
+        const isGotoshi = discardedTile && discardedTile.match(/^[r]?5[mps]$/);
+        const isHachigiri = discardedTile && discardedTile.match(/^8[mps]$/);
+    
+        if (isGotoshi) {
+            this.state.turnIndex = (lastPlayerIndex + 2) % 4;
+            const skippedPlayerIndex = (lastPlayerIndex + 1) % 4;
+            console.log(`5とばし！ Player ${lastPlayerIndex} -> Player ${this.state.turnIndex} (Player ${skippedPlayerIndex} をスキップ)`);
+            this.callbacks.onSystemMessage("「5とばし」により、ターンがスキップされました。");
+        } else if (isHachigiri) {
+            this.state.turnIndex = lastPlayerIndex;
+            console.log(`8切り！ Player ${lastPlayerIndex} がもう一度ツモります。`);
+            this.callbacks.onSystemMessage("「8切り」により、同じプレイヤーがもう一度行動します。");
+        } else {
+            this.state.turnIndex = (lastPlayerIndex + 1) % 4;
+        }
+    
         this.processTurn();
     }
     
     handleWin(winnerIndex, fromIndex, winTile, isTsumo, isChankan = false) {
         this.state.gameStarted = false;
         
-        // ★ すべてのタイマーをクリア
         if (this.state.turnTimer) {
             clearTimeout(this.state.turnTimer.timeout);
             this.state.turnTimer = null;
@@ -653,7 +918,28 @@ class Game {
         
         const winForm = getWinningForm(winnerHand, this.state.furos[winnerIndex]);
         const fu = calculateFu(winForm, yakuResult.yakuList, winContext);
-        const scoreResult = calculateScore(yakuResult.totalHan, fu, isDealer, isTsumo);
+        
+        const originalHan = yakuResult.isYakuman ? (yakuResult.totalHan - (yakuResult.yakuList.find(y => y.name === "ドラ")?.han || 0)) : yakuResult.yakuList.reduce((s, y) => (y.name !== 'ドラ' ? s + y.han : s), 0);
+        let finalHan = yakuResult.totalHan;
+        let hanForCalc = originalHan;
+        
+        const doraHan = yakuResult.yakuList.find(y => y.name === 'ドラ')?.han || 0;
+
+        if (this.state.isRevolution && !yakuResult.isYakuman) {
+            console.log("革命中のため翻数を反転します。");
+            if (hanForCalc >= 13) hanForCalc = 13; // 役満以上は13としてカウント
+
+            const yakuHanOnly = hanForCalc;
+            let revolutionaryHan = (14 - yakuHanOnly);
+            if (revolutionaryHan <= 0) revolutionaryHan = 1;
+
+            finalHan = revolutionaryHan + doraHan;
+            console.log(`元の役翻数: ${yakuHanOnly}, ドラ: ${doraHan} => 革命後の翻数: ${finalHan}`);
+        } else if (this.state.isRevolution && yakuResult.isYakuman) {
+            console.log("革命中ですが役満は影響を受けません。");
+        }
+        
+        const scoreResult = calculateScore(finalHan, fu, isDealer, isTsumo);
         
         const honbaPayment = this.state.honba * 300;
         const riichiStickPayment = this.state.riichiSticks * 1000;
@@ -662,17 +948,37 @@ class Game {
             this.state.scores[winnerIndex] += scoreResult.total + honbaPayment + riichiStickPayment;
             for (let i = 0; i < 4; i++) {
                 if (i === winnerIndex) continue;
-                const payment = (i === this.state.oyaIndex) ? scoreResult.payments[0] : (scoreResult.payments.length > 1 ? scoreResult.payments[1] : scoreResult.payments[0] / 2);
-                this.state.scores[i] -= payment + (isDealer ? (this.state.honba * 100) : (i === this.state.oyaIndex ? this.state.honba * 100 : this.state.honba * 100));
+                const oyaPayment = isDealer ? scoreResult.payments[0] : scoreResult.payments[0];
+                const koPayment = isDealer ? scoreResult.payments[0] : scoreResult.payments[1];
+                this.state.scores[i] -= (i === this.state.oyaIndex ? oyaPayment : koPayment);
+                this.state.scores[i] -= (this.state.honba * 100);
             }
-        } else {
+        } else { // Ron
             this.state.scores[winnerIndex] += scoreResult.total + honbaPayment + riichiStickPayment;
             this.state.scores[fromIndex] -= scoreResult.total + honbaPayment;
         }
     
         this.state.riichiSticks = 0;
     
-        const roundResult = { type: 'win', winnerIndex, fromIndex, winTile, isTsumo, hand: winnerHand, furo: this.state.furos[winnerIndex], yakuList: yakuResult.yakuList, fu, han: yakuResult.totalHan, scoreResult, finalScores: this.state.scores, doraIndicators: this.state.doraIndicators, uraDoraIndicators: this.state.isRiichi[winnerIndex] ? this.state.uraDoraIndicators : [] };
+        const roundResult = { 
+            type: 'win', 
+            winnerIndex, 
+            fromIndex, 
+            winTile, 
+            isTsumo, 
+            hand: winnerHand, 
+            furo: this.state.furos[winnerIndex], 
+            yakuList: yakuResult.yakuList, 
+            fu, 
+            han: finalHan, 
+            originalHan: originalHan + doraHan, // 表示用にドラも足す
+            isRevolution: this.state.isRevolution,
+            scoreResult, 
+            finalScores: this.state.scores.map(Math.round), 
+            doraIndicators: this.state.doraIndicators, 
+            uraDoraIndicators: this.state.isRiichi[winnerIndex] ? this.state.uraDoraIndicators : [] 
+        };
+
         this.callbacks.onResult(roundResult);
     
         setTimeout(() => this.startNextRound(isDealer), 10000);
@@ -681,7 +987,6 @@ class Game {
     handleDraw(drawType, context = {}) {
         this.state.gameStarted = false;
         
-        // ★ すべてのタイマーをクリア
         if (this.state.turnTimer) {
             clearTimeout(this.state.turnTimer.timeout);
             this.state.turnTimer = null;
@@ -710,10 +1015,10 @@ class Game {
             isOyaTenpai = true;
         }
     
-        const roundResult = { type: 'draw', drawType, tenpaiPlayers, finalScores: this.state.scores, ...context };
+        const roundResult = { type: 'draw', drawType, tenpaiPlayers, finalScores: this.state.scores.map(Math.round), ...context };
         this.callbacks.onResult(roundResult);
     
-        setTimeout(() => this.startNextRound(isOyaTenpai), 10000);
+        setTimeout(() => this.startNextRound(isOyaTenpai), 5000);
     }
     
     startNextRound(isRenchan) {
@@ -729,7 +1034,7 @@ class Game {
                  return;
             }
             if (currentOya === 3) {
-                this.state.bakaze = this.state.bakaze === "東" ? "南" : "西"; // 次の風へ
+                this.state.bakaze = this.state.bakaze === "東" ? "南" : "西";
                 this.state.kyoku = 1;
             } else {
                 this.state.kyoku++;
@@ -738,35 +1043,79 @@ class Game {
         this.setupNewRound();
     }
     
-    // --- START: CPU LOGIC ENHANCEMENT ---
-
     handleCpuTurn(playerIndex) {
-        if (this.state.turnIndex !== playerIndex) return;
+        if (this.state.turnIndex !== playerIndex && !(this.state.pendingSpecialAction && this.state.pendingSpecialAction.playerIndex === playerIndex)) return;
         
-        // ★ 修正: ツモ牌がある場合のみツモ和了をチェック
+        if (this.state.pendingSpecialAction && this.state.pendingSpecialAction.playerIndex === playerIndex) {
+            const pa = this.state.pendingSpecialAction;
+            if (pa.type === 'kyusute') {
+                const hand = this.state.hands[playerIndex];
+                if (!hand || hand.length === 0) {
+                     console.error(`CPU ${playerIndex} (9捨て)は捨てる牌がありません。`);
+                     this.state.pendingSpecialAction = null;
+                     this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                     return;
+                }
+                const tileToDiscard = this.evaluateAndChooseDiscard(playerIndex) || hand[hand.length - 1];
+                console.log(`CPU ${playerIndex} (9捨て)が ${tileToDiscard} を捨てます。`);
+                setTimeout(() => this.handlePlayerAction(playerIndex, { type: 'kyusute_discard', tile: tileToDiscard }), 100 + Math.random() * 500);
+
+            } else if (pa.type === 'nanawatashi') {
+                const hand = this.state.hands[playerIndex];
+                if (!hand || hand.length === 0) {
+                    console.log(`CPU ${playerIndex} (7わたし)は渡す牌がないため、ターンを終了します。`);
+                    this.state.pendingSpecialAction = null;
+                    this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                    return;
+                }
+                const tileToGive = this.findMostUselessTile(hand, playerIndex);
+
+                const possibleTargets = this.players
+                    .map(p => p.playerIndex)
+                    .filter(pIdx => pIdx !== playerIndex && !this.state.isRiichi[pIdx]);
+
+                if (possibleTargets.length > 0 && tileToGive) {
+                    const targetPlayerIndex = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
+                    console.log(`CPU ${playerIndex} (7わたし)が ${tileToGive} を Player ${targetPlayerIndex} に渡します。`);
+                    setTimeout(() => this.handlePlayerAction(playerIndex, { type: 'nanawatashi_select', tileToGive, targetPlayerIndex }), 100 + Math.random() * 1000);
+                } else {
+                    console.log(`CPU ${playerIndex} (7わたし)は渡す相手または牌がないため、ターンを終了します。`);
+                    this.state.pendingSpecialAction = null;
+                    this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
+                }
+            }
+            return;
+        }
+
         if (this.state.drawnTile && this.state.turnActions && this.state.turnActions.canTsumo) {
             console.log(`CPU ${playerIndex} がツモ和了を選択しました。`);
-            setTimeout(() => this.handlePlayerAction(playerIndex, { type: 'tsumo' }), 500);
+            setTimeout(() => this.handlePlayerAction(playerIndex, { type: 'tsumo' }), 100);
             return;
         }
         
-        // 2. Choose discard
         const tileToDiscard = this.evaluateAndChooseDiscard(playerIndex);
         
-        console.log(`CPU ${playerIndex} が ${tileToDiscard} を捨てます。`);
-        setTimeout(() => this.handleDiscard(playerIndex, tileToDiscard), 500);
+        if (tileToDiscard) {
+            console.log(`CPU ${playerIndex} が ${tileToDiscard} を捨てます。`);
+            setTimeout(() => this.handleDiscard(playerIndex, tileToDiscard), 100);
+        } else {
+             const hand = this.state.hands[playerIndex];
+             if(hand && hand.length > 0) {
+                const fallbackTile = hand[hand.length-1];
+                console.log(`CPU ${playerIndex} は評価で牌を選べず、最後の牌 ${fallbackTile} を捨てます。`);
+                setTimeout(() => this.handleDiscard(playerIndex, fallbackTile), 100);
+             } else {
+                console.log(`CPU ${playerIndex} は捨てる牌がありません。ターンをスキップします。`);
+                this.proceedToNextTurn(playerIndex, null);
+             }
+        }
     }
 
-    /**
-     * CPUが捨てる牌を評価・選択する
-     * @param {number} playerIndex - CPUのプレイヤーインデックス
-     * @returns {string} 捨てるべき牌
-     */
     evaluateAndChooseDiscard(playerIndex) {
         const hand = [...this.state.hands[playerIndex]];
+        if (hand.length === 0) return null;
         hand.sort(tileSort);
 
-        // --- 1. Defensive Logic: Check for Riichi players ---
         const riichiPlayers = this.state.isRiichi.map((is, i) => is ? i : -1).filter(i => i !== -1 && i !== playerIndex);
         if (riichiPlayers.length > 0) {
             const safeTilesInHand = [];
@@ -783,66 +1132,59 @@ class Game {
 
             if (safeTilesInHand.length > 0) {
                 console.log(`CPU ${playerIndex} is defending. Found safe tiles: ${safeTilesInHand.join(', ')}`);
-                // 複数の安全牌がある場合、その中で最も不要な牌を評価して捨てる
                 return this.findMostUselessTile(safeTilesInHand, playerIndex);
             }
         }
         
-        // --- 2. Offensive Logic: Find the most useless tile in hand ---
         return this.findMostUselessTile(hand, playerIndex);
     }
 
-    /**
-     * 指定された牌のリストの中から最も不要な牌を見つける
-     * @param {string[]} tiles - 評価対象の牌の配列
-     * @param {number} playerIndex - CPUのプレイヤーインデックス
-     * @returns {string} 最も不要な牌
-     */
     findMostUselessTile(tiles, playerIndex) {
-        const fullHand = this.state.hands[playerIndex];
-        const counts = fullHand.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+        if (!tiles || tiles.length === 0) {
+            const hand = this.state.hands[playerIndex];
+            if (!hand || hand.length === 0) return null;
+            return hand[hand.length-1]; // Fallback
+        }
 
-        let bestTileToDiscard = tiles[tiles.length - 1]; // Fallback
-        let maxScore = -1;
+        const fullHand = this.state.hands[playerIndex];
+        const counts = fullHand.reduce((acc, t) => { const norm = normalizeTile(t); acc[norm] = (acc[norm] || 0) + 1; return acc; }, {});
+
+        let bestTileToDiscard = tiles[tiles.length - 1];
+        let maxScore = -Infinity;
 
         for (const tile of new Set(tiles)) {
             let score = 0;
+            const normTile = normalizeTile(tile);
 
-            // 評価ロジック (高いほど不要)
-            // a. 孤立した役牌か？
-            if (isYakuhai(tile, this.state.bakaze, this.state.jikazes[playerIndex])) {
-                score += (counts[tile] === 1) ? 0 : -10; // ペアなら保持
+            if (isYakuhai(normTile, this.state.bakaze, this.state.jikazes[playerIndex])) {
+                score += (counts[normTile] === 1) ? 20 : -10;
             } 
-            // b. 孤立した字牌か？
-            else if (!isNumberTile(tile)) {
-                score += (counts[tile] === 1) ? 50 : 0; // 孤立オタ風は最優先で捨てる
+            else if (isYaochu(normTile)){
+                 score += (counts[normTile] === 1) ? 30 : 0;
             }
-            // c. 孤立した数牌か？
-            else {
-                const num = parseInt(tile[0]);
-                const suit = tile[1];
+            else if (isJi(normTile)) { // Guest winds
+                score += (counts[normTile] === 1) ? 50 : 0;
+            }
+            else if (isNumberTile(normTile)){
+                const num = parseInt(normTile[0]);
+                const suit = normTile[1];
                 let isIsolated = true;
                 
-                // 周辺の牌があるかチェック
                 for (let i = -2; i <= 2; i++) {
                     if (i === 0) continue;
-                    const neighbor = `${num + i}${suit}`;
-                    if (counts[neighbor]) {
+                    const neighborNorm = `${num + i}${suit}`;
+                    if (counts[neighborNorm]) {
                         isIsolated = false;
-                        score -= 5; // 関連牌があれば価値が上がる
+                        score -= 5;
                     }
                 }
 
                 if (isIsolated) {
-                    score += 20;
-                    // 端に近いほど価値が低い（鳴かれにくい）
-                    score += Math.min(num - 1, 9 - num); // 1,9 -> 0; 2,8 -> 1; ... 5 -> 4
+                    score += 20 + Math.min(num - 1, 9 - num);
                 }
                 
-                // ペアや刻子なら価値が高い
-                if (counts[tile] >= 2) score -= 20;
-                // ドラなら価値が高い
-                if (this.state.dora.includes(tile)) score -= 50;
+                if (counts[normTile] >= 2) score -= 20;
+                if (this.state.dora.includes(normTile)) score -= 50;
             }
             
             if (score > maxScore) {
@@ -857,7 +1199,6 @@ class Game {
         const possibleActions = this.state.waitingForAction.possibleActions[playerIndex];
         if (!possibleActions) return { type: 'skip' };
 
-        // 1. Ron Check (Highest Priority)
         if (possibleActions.canRon) {
             const hand = this.state.hands[playerIndex];
             const furo = this.state.furos[playerIndex];
@@ -869,42 +1210,32 @@ class Game {
                 dora: this.state.dora, uraDora: [], 
                 bakaze: this.state.bakaze, jikaze: this.state.jikazes[playerIndex] 
             };
-            if (checkYaku(winContext).totalHan > 0) {
+            const yaku = checkYaku(winContext);
+            if (yaku.totalHan > 2) {
                  console.log(`CPU ${playerIndex} がロンを選択しました。`);
                 return { type: 'ron' };
             }
         }
 
-        // 2. Meld (Pon/Daiminkan) Check
-        // 現状、CPUはリーチしていない時のみ鳴く
         if (!this.state.isRiichi[playerIndex]) {
             if (possibleActions.canDaiminkan || possibleActions.canPon) {
-                // 役牌なら鳴く
                 if (isYakuhai(tile, this.state.bakaze, this.state.jikazes[playerIndex])) {
                     console.log(`CPU ${playerIndex} が役牌 (${tile}) のポン/カンを選択しました。`);
                     return possibleActions.canDaiminkan ? { type: 'daiminkan' } : { type: 'pon' };
                 }
-                // (ここに他の鳴き戦略を追加可能。例：断么九に向かう、聴牌するなど)
-            }
-            // チーは現状見送る（より高度な判断が必要なため）
-            if (possibleActions.canChi.length > 0) {
-                // (ここにチーの戦略を追加可能)
             }
         }
 
-        // 3. Skip if no action is taken
         return { type: 'skip' };
     }
-
-    // --- END: CPU LOGIC ENHANCEMENT ---
     
     isDiscardFuriten(playerIndex) {
         const waits = getWaits(this.state.hands[playerIndex], this.state.furos[playerIndex]);
         if (waits.length === 0) {
             return false;
         }
-        const discardTiles = this.state.discards[playerIndex].map(d => d.tile);
-        return waits.some(waitTile => discardTiles.includes(waitTile));
+        const discardNormTiles = new Set(this.state.discards[playerIndex].map(d => normalizeTile(d.tile)));
+        return waits.some(waitTile => discardNormTiles.has(normalizeTile(waitTile)));
     }
 
     updateFuritenState(playerIndex) {

@@ -1,7 +1,7 @@
 // server.js
 const express = require('express');
 const http = require('http');
-const path = require('path'); // ★ pathモジュールを追加
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { Game } = require('./game-manager.js');
 
@@ -11,8 +11,11 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// ★ 静的ファイルを提供する設定を追加
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname)));
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 
 let clients = [];
 let cpuPlayers = [];
@@ -103,7 +106,10 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            if (!game || !game.state || !game.state.gameStarted) return;
+            if (!game || !game.state.gameStarted) {
+                console.log(`ゲーム未開始時のアクションを無視: ${data.type}`);
+                return;
+            }
 
             if (data.type === 'discard') {
                 game.handleDiscard(client.playerIndex, data.tile);
@@ -122,11 +128,13 @@ wss.on('connection', (ws) => {
         console.log(`Player ${disconnectingPlayer.playerIndex} が切断しました。`);
         clients = clients.filter(c => c.ws !== ws);
         clearTimeout(gameStartTimeout);
-        game = null;
-        cpuPlayers = [];
-        broadcastSystemMessage(`プレイヤーが切断したため、ゲームをリセットします。`);
-
-        // 残ったプレイヤーのインデックスを再割り当て
+        
+        if (game) {
+            game = null;
+            cpuPlayers = [];
+            broadcastSystemMessage(`プレイヤーが切断したため、ゲームをリセットします。`);
+        }
+        
         clients.forEach((c, i) => {
             c.playerIndex = i;
             c.ws.send(JSON.stringify({ type: 'player_assignment', playerIndex: i }));
@@ -140,33 +148,26 @@ function createPersonalizedState(playerIndex) {
 
     const serializableState = { ...game.state };
 
-    // waitingForAction.actionTimeout はシリアライズできないので除外
     if (serializableState.waitingForAction) {
         const { actionTimeout, ...rest } = serializableState.waitingForAction;
         serializableState.waitingForAction = rest;
     }
     
-    // ★★★ 修正箇所: turnTimer.timeout もシリアライズできないので除外 ★★★
     if (serializableState.turnTimer) {
-        // timeoutプロパティ（setTimeoutの戻り値）を除外し、残りの情報を保持
         const { timeout, ...rest } = serializableState.turnTimer;
         serializableState.turnTimer = rest;
     }
 
-    // stateを一度JSON文字列に変換し、それを再度パースすることで、循環参照のない安全なコピーを作成
     const stateCopy = JSON.parse(JSON.stringify(serializableState));
 
-    // 他のプレイヤーの手牌を隠す
     for (let i = 0; i < 4; i++) {
         if (i !== playerIndex && stateCopy.hands[i]) {
             stateCopy.hands[i] = new Array(stateCopy.hands[i].length).fill('back');
         }
     }
 
-    // アクションをパーソナライズ
     if (stateCopy.waitingForAction) {
         const myActions = stateCopy.waitingForAction.possibleActions[playerIndex];
-        // 自分のアクション以外は空にする
         stateCopy.waitingForAction.possibleActions = [];
         if (myActions) {
             stateCopy.waitingForAction.possibleActions[playerIndex] = myActions;
@@ -175,11 +176,12 @@ function createPersonalizedState(playerIndex) {
     if (stateCopy.turnActions && stateCopy.turnIndex !== playerIndex) {
         stateCopy.turnActions = {};
     }
+    
+    // pendingSpecialActionは全プレイヤーに送る必要があるため削除しない
 
-    // サーバー内部情報を削除
     delete stateCopy.yama;
     delete stateCopy.deadWall;
-    delete stateCopy.uraDoraIndicators; // 裏ドラは結果表示時まで見せない
+    delete stateCopy.uraDoraIndicators;
 
     stateCopy.yamaLength = game.state.yama.length;
 

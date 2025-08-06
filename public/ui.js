@@ -12,9 +12,10 @@ const roundInfoEl = document.getElementById("round-info");
 const riichiSticksEl = document.getElementById("riichi-sticks");
 const resultModalEl = document.getElementById("result-modal");
 const yakuResultContentEl = document.getElementById("yaku-result-content");
-const timerDisplayEl = document.getElementById("timer-display"); // タイマー要素を取得
+const timerDisplayEl = document.getElementById("timer-display");
 const actionButtonsContainer = document.getElementById("action-buttons");
 const tenpaiInfoContainerEl = document.getElementById("tenpai-info-container");
+const revolutionStatusEl = document.getElementById("revolution-status");
 const actionButtons = {
     riichi: document.getElementById("riichi"),
     pon: document.getElementById("pon"),
@@ -27,21 +28,14 @@ const actionButtons = {
 
 // --- Core UI Logic ---
 
-let timerAnimationId = null; // タイマーのアニメーションIDを管理
+let timerAnimationId = null;
 
-/**
- * ゲーム状態に基づいて画面全体を再描画する
- * @param {object} gameState - 最新のゲーム状態
- * @param {number} myPlayerIndex - このクライアントのプレイヤーインデックス
- * @param {function} sendDiscardCb - サーバーに打牌を送信するコールバック関数
- * @param {function} sendActionCb - サーバーにアクションを送信するコールバック関数
- */
 function renderAll(gameState, myPlayerIndex, sendDiscardCb, sendActionCb) {
     if (!gameState || myPlayerIndex === -1) return;
 
     const playerPositions = [ myPlayerIndex, (myPlayerIndex + 1) % 4, (myPlayerIndex + 2) % 4, (myPlayerIndex + 3) % 4 ];
     playerPositions.forEach((playerIdx, displayIdx) => {
-        renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscardCb);
+        renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscardCb, sendActionCb);
         renderDiscards(gameState, playerIdx, displayIdx);
         renderFuro(gameState, playerIdx, displayIdx);
         renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx);
@@ -49,27 +43,21 @@ function renderAll(gameState, myPlayerIndex, sendDiscardCb, sendActionCb) {
     renderCommonInfo(gameState);
     updateInfoText(gameState, myPlayerIndex);
     handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscardCb);
-    renderTenpaiInfo(gameState, myPlayerIndex); // ★ 聴牌情報表示の呼び出しを追加
+    handleSpecialActions(gameState, myPlayerIndex, sendActionCb);
+    renderTenpaiInfo(gameState, myPlayerIndex);
     
-    // タイマー情報を抽出して描画関数を呼び出す
     const timerInfo = gameState.turnTimer || gameState.waitingForAction?.timer;
     renderTimer(timerInfo);
 }
 
-/**
- * サーバーから受け取ったタイマー情報を基に、画面にカウントダウンを表示する
- * @param {object|null} timerInfo - サーバーから渡されたタイマー情報 (startTime, duration)
- */
 function renderTimer(timerInfo) {
-    // 既存のアニメーションループがあればキャンセル
     if (timerAnimationId) {
         cancelAnimationFrame(timerAnimationId);
         timerAnimationId = null;
     }
 
-    // 有効なタイマー情報がある場合
     if (timerInfo && timerInfo.startTime && timerInfo.duration) {
-        timerDisplayEl.style.opacity = '1'; // タイマーを表示
+        timerDisplayEl.style.opacity = '1';
 
         const update = () => {
             const elapsedTime = Date.now() - timerInfo.startTime;
@@ -79,29 +67,19 @@ function renderTimer(timerInfo) {
             timerDisplayEl.textContent = remainingSeconds;
 
             if (remainingTime > 0) {
-                // 残り時間があれば次のフレームで再度更新
                 timerAnimationId = requestAnimationFrame(update);
             } else {
-                // 時間切れになったら非表示にする
                 timerDisplayEl.style.opacity = '0';
                 timerDisplayEl.textContent = '';
             }
         };
-        update(); // 更新ループを開始
+        update();
     } else {
-        // タイマー情報がなければ非表示にする
         timerDisplayEl.style.opacity = '0';
         timerDisplayEl.textContent = '';
     }
 }
 
-
-/**
- * ★★★ NEW FUNCTION ★★★
- * 聴牌になる捨て牌とその待ち牌の情報を計算して表示する
- * @param {object} gameState - ゲーム状態
- * @param {number} myPlayerIndex - 自分のプレイヤーインデックス
- */
 function renderTenpaiInfo(gameState, myPlayerIndex) {
     tenpaiInfoContainerEl.innerHTML = "";
     tenpaiInfoContainerEl.style.display = 'none';
@@ -109,21 +87,21 @@ function renderTenpaiInfo(gameState, myPlayerIndex) {
     const isMyTurn = gameState.turnIndex === myPlayerIndex;
     const isMyRiichi = gameState.isRiichi[myPlayerIndex];
     const hand = gameState.hands[myPlayerIndex];
-    const canDiscard = isMyTurn && hand.length % 3 === 2;
+    // This condition correctly determines if the player should be able to discard.
+    const canDiscard = isMyTurn;
 
-    // 自分のターンで、リーチしておらず、打牌可能な状態でのみ表示
+
     if (!canDiscard || isMyRiichi) {
         return;
     }
 
     const furo = gameState.furos[myPlayerIndex];
-    const tenpaiDiscards = new Map(); // Map to store: discardTile -> [waits]
+    const tenpaiDiscards = new Map();
 
-    // 手牌のユニークな牌それぞれについて、捨てた場合の待ちを確認
     const uniqueTiles = [...new Set(hand)];
     uniqueTiles.forEach(tileToDiscard => {
         const tempHand = [...hand];
-        // 同じ牌が複数ある場合でも、1枚だけ取り除く
+        if(tempHand.length === 0) return;
         tempHand.splice(tempHand.lastIndexOf(tileToDiscard), 1);
         const waits = getWaits(tempHand, furo);
 
@@ -133,12 +111,11 @@ function renderTenpaiInfo(gameState, myPlayerIndex) {
     });
 
     if (tenpaiDiscards.size === 0) {
-        return; // 聴牌になる捨て牌がない場合は何もしない
+        return;
     }
     
     tenpaiInfoContainerEl.style.display = 'flex';
 
-    // 牌の種類順にソートして表示を安定させる
     const sortedDiscards = [...tenpaiDiscards.keys()].sort(tileSort);
 
     sortedDiscards.forEach(discard => {
@@ -175,34 +152,41 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
     
     const hand = gameState.hands[playerIdx];
     const isMyTurn = gameState.turnIndex === playerIdx && playerIdx === myPlayerIndex;
-    const canDiscard = isMyTurn && hand.length % 3 === 2;
+    const pa = gameState.pendingSpecialAction;
+    const isMySpecialActionTurn = pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute';
+
+    const canDiscard = isMyTurn || isMySpecialActionTurn;
 
     if (playerIdx === myPlayerIndex) {
-        // --- ★ NEW: 聴牌になる捨て牌を事前に計算 ---
         let tenpaiDiscardSet = new Set();
         if (canDiscard && !gameState.isRiichi[myPlayerIndex]) {
             const uniqueTilesInHand = [...new Set(hand)];
             uniqueTilesInHand.forEach(tileToDiscard => {
                 const tempHand = [...hand];
+                if(tempHand.length === 0) return;
                 tempHand.splice(tempHand.lastIndexOf(tileToDiscard), 1);
-                // yaku.jsのgetWaits関数を利用
                 if (getWaits(tempHand, gameState.furos[myPlayerIndex]).length > 0) {
                     tenpaiDiscardSet.add(tileToDiscard);
                 }
             });
         }
-        // --- ★ END NEW ---
 
         let handToDisplay = [...hand];
         let drawnTile = null;
 
-        if (canDiscard && gameState.drawnTile) {
+        if (isMyTurn && gameState.drawnTile) {
             const drawnTileIndex = handToDisplay.lastIndexOf(gameState.drawnTile);
             if (drawnTileIndex > -1) {
                 [drawnTile] = handToDisplay.splice(drawnTileIndex, 1);
             } else {
-                 console.warn("Drawn tile not found in hand, taking last tile as fallback.");
-                 drawnTile = handToDisplay.pop();
+                 console.warn("ツモ牌が手牌に見つかりませんでした。表示を強制します。", { drawnTile: gameState.drawnTile, hand: [...handToDisplay] });
+                 // ツモ牌を手牌から見つけられなかった場合でも、ツモ牌を分離して表示する
+                 drawnTile = gameState.drawnTile;
+                 // この場合 handToDisplay にツモ牌が残っている可能性があるので、手動で探して削除する
+                 const stillExistsIndex = handToDisplay.findIndex(t => t === drawnTile);
+                 if (stillExistsIndex > -1) {
+                    handToDisplay.splice(stillExistsIndex, 1);
+                 }
             }
         }
         
@@ -213,7 +197,6 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
             const clickHandler = canClick ? () => sendDiscardCb(tile) : null;
             const tileImg = createTileImage(tile, clickHandler);
             
-            // ★ NEW: 計算結果に基づいてハイライト用クラスを追加
             if (tenpaiDiscardSet.has(tile)) {
                 tileImg.classList.add('tile-tenpai-candidate');
             }
@@ -226,7 +209,6 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
             const tileImg = createTileImage(drawnTile, clickHandler);
             tileImg.style.marginLeft = "15px";
 
-            // ★ NEW: ツモ牌にもハイライト用クラスを追加
             if (tenpaiDiscardSet.has(drawnTile)) {
                 tileImg.classList.add('tile-tenpai-candidate');
             }
@@ -235,15 +217,19 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
         }
 
     } else {
-        hand.forEach(() => container.appendChild(createTileImage('back')));
+        // For other players, just show the back of the tiles.
+        const numTiles = gameState.hands[playerIdx].length;
+        for (let i = 0; i < numTiles; i++) {
+             container.appendChild(createTileImage('back'));
+        }
     }
 }
+
 
 function renderDiscards(gameState, playerIdx, displayIdx) {
     const container = discardContainers[displayIdx];
     container.innerHTML = "";
     
-    // ★★★ 修正箇所: サーバーから送られてきた `lastDiscard` を直接使う ★★★
     const lastDiscardInfo = gameState.lastDiscard;
 
     gameState.discards[playerIdx].forEach((discard, index) => {
@@ -251,7 +237,6 @@ function renderDiscards(gameState, playerIdx, displayIdx) {
         if (discard.isRiichi) {
             img.classList.add("riichi-discard");
         }
-        // サーバーからの最新捨て牌情報と一致する場合にハイライトする
         if (lastDiscardInfo && 
             playerIdx === lastDiscardInfo.player && 
             index === lastDiscardInfo.discardIndex) {
@@ -267,12 +252,13 @@ function renderFuro(gameState, playerIdx, displayIdx) {
     gameState.furos[playerIdx].forEach(set => {
         const group = document.createElement("div");
         group.className = "furo-set";
-        let tilesToRender = [...set.tiles];
+        let tilesToRender = [...set.tiles].sort(tileSort);
 
         if (set.type === 'ankan') {
+            const normTile = normalizeTile(tilesToRender[0]);
             group.appendChild(createTileImage('back', null, true));
-            group.appendChild(createTileImage(tilesToRender[1], null, true));
-            group.appendChild(createTileImage(tilesToRender[2], null, true));
+            group.appendChild(createTileImage(normTile, null, true));
+            group.appendChild(createTileImage(normTile, null, true));
             group.appendChild(createTileImage('back', null, true));
         } else if (set.type === 'kakan') {
             const originalPon = tilesToRender.slice(0, 3);
@@ -290,9 +276,13 @@ function renderFuro(gameState, playerIdx, displayIdx) {
         } else {
             const fromWho = (playerIdx - set.from + 4) % 4;
             let calledTile = set.called || set.tiles[0]; 
-            let rotatedIndex;
+            let rotatedIndex = -1;
             if (set.type === 'pon' || set.type === 'daiminkan') {
-                rotatedIndex = fromWho === 1 ? 2 : (fromWho === 2 ? 1 : 0);
+                rotatedIndex = (fromWho === 1 ? tilesToRender.length-1 : (fromWho === 2 ? 1 : 0));
+                let temp = tilesToRender[rotatedIndex];
+                tilesToRender.splice(rotatedIndex, 1);
+                tilesToRender.splice(0,0,temp);
+                rotatedIndex = 0;
             } else { // chi
                 rotatedIndex = tilesToRender.indexOf(calledTile);
             }
@@ -311,9 +301,30 @@ function renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx) {
     const div = playerInfoDivs[displayIdx];
     const jikazeChar = gameState.jikazes[playerIdx];
     const isOya = gameState.oyaIndex === playerIdx;
-    div.querySelector('span:first-child').textContent = `${playerIdx === myPlayerIndex ? 'あなた' : 'P' + (playerIdx + 1)} (${jikazeChar}${isOya ? '家' : ''}) `;
+    const handLength = gameState.hands[playerIdx].length;
+
+    const handCountSpan = div.querySelector('.player-hand-info');
+    if (handCountSpan) {
+        const isTurn = gameState.turnIndex === playerIdx;
+        let isTenpaiShape = false;
+
+        // n面子1雀頭の聴牌形（または和了形）かどうかの判定 (n対子は考慮しない)
+        if (isTurn) { // ツモ後の状態 (3n+2枚)
+            if (handLength >= 2 && (handLength - 2) % 3 === 0) {
+                isTenpaiShape = true;
+            }
+        } else { // ツモ前の状態 (3n+1枚)
+            if (handLength >= 1 && (handLength - 1) % 3 === 0) {
+                isTenpaiShape = true;
+            }
+        }
+        
+        handCountSpan.textContent = `${playerIdx === myPlayerIndex ? 'あなた' : 'P' + (playerIdx + 1)} (${jikazeChar}${isOya ? '家' : ''}) [${handLength}枚]`;
+        handCountSpan.classList.toggle('agari-possible', isTenpaiShape);
+    }
+
     div.querySelector('.player-score').textContent = gameState.scores[playerIdx];
-    div.classList.toggle('is-turn', gameState.turnIndex === playerIdx);
+    div.classList.toggle('is-turn', (gameState.turnIndex === playerIdx || (gameState.pendingSpecialAction && gameState.pendingSpecialAction.playerIndex === playerIdx)));
 }
 
 function renderCommonInfo(gameState) {
@@ -322,10 +333,27 @@ function renderCommonInfo(gameState) {
     gameState.doraIndicators.forEach(d => doraDisplayEl.appendChild(createTileImage(d, null, true)));
     roundInfoEl.innerHTML = `${gameState.bakaze}${gameState.kyoku}局 ${gameState.honba}本場`;
     riichiSticksEl.textContent = `供託: ${gameState.riichiSticks}本`;
+
+    if (gameState.isRevolution) {
+        revolutionStatusEl.textContent = "革命中！";
+    } else {
+        revolutionStatusEl.textContent = "";
+    }
 }
 
 function updateInfoText(gameState, myPlayerIndex) {
     if (!gameState || !gameState.gameStarted) return;
+    
+    const pa = gameState.pendingSpecialAction;
+    if (pa && pa.playerIndex === myPlayerIndex) {
+        if (pa.type === 'kyusute') {
+            infoEl.textContent = "「9捨て」！もう1枚捨てる牌を選んでください。";
+        } else if (pa.type === 'nanawatashi') {
+            infoEl.textContent = "「7わたし」！渡す牌と相手を選んでください。";
+        }
+        return;
+    }
+
     if (gameState.waitingForAction && gameState.waitingForAction.possibleActions[myPlayerIndex]) {
         infoEl.textContent = "アクションを選択してください。";
         return;
@@ -335,13 +363,13 @@ function updateInfoText(gameState, myPlayerIndex) {
             infoEl.textContent = "捨てる牌を選んでください（リーチ）";
         } else if (gameState.isRiichi[myPlayerIndex]) {
             infoEl.textContent = "あなたのターンです。（リーチ中）";
-        } else if (gameState.drawnTile) {
+        } else if (gameState.drawnTile) { // If a tile is drawn, it's time to discard.
              infoEl.textContent = "あなたのターンです。捨てる牌を選んでください。";
-        } else {
+        } else { // After a call (pon, chi, etc.), no tile is drawn, but it's time to discard.
              infoEl.textContent = "あなたのターンです。鳴いた後、捨てる牌を選んでください。";
         }
     } else {
-        const turnPlayerName = `Player ${gameState.turnIndex + 1}`;
+        const turnPlayerName = `P${gameState.turnIndex + 1}`;
         infoEl.textContent = `${turnPlayerName} のターンです。`;
     }
 }
@@ -349,135 +377,186 @@ function updateInfoText(gameState, myPlayerIndex) {
 function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscardCb) {
     hideActionButtons();
     if (!gameState) return;
-
-    // waitingForActionが存在し、かつ自分のアクションがあるかチェック
-    const myTurnActions = gameState.turnIndex === myPlayerIndex && gameState.turnActions;
-    const myWaitingActions = gameState.waitingForAction && gameState.waitingForAction.possibleActions[myPlayerIndex];
-
-    // ★★★ ここからが修正箇所 ★★★
-    const isMyTurnAndRiichi = gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex];
-
-    // 表示すべきアクションが無く、かつリーチ中の自動ツモ切りの状況でもなければ、何もせずに関数を抜ける
-    if (!myTurnActions && !myWaitingActions && !isMyTurnAndRiichi) {
-        actionButtonsContainer.style.display = 'none'; // コンテナ自体を隠す
+    
+    if (gameState.pendingSpecialAction && gameState.pendingSpecialAction.playerIndex === myPlayerIndex) {
+        actionButtonsContainer.style.display = 'none';
         return;
     }
-    // ★★★ ここまでが修正箇所 ★★★
+
+    const myTurnActions = gameState.turnIndex === myPlayerIndex && gameState.turnActions;
+    const myWaitingActions = gameState.waitingForAction && gameState.waitingForAction.possibleActions[myPlayerIndex];
+    const isMyTurnAndRiichi = gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex];
+    let actionsToShow = {};
+
+    if (!myTurnActions && !myWaitingActions) {
+         if (isMyTurnAndRiichi && gameState.drawnTile) {
+            const tempHand = [...gameState.hands[myPlayerIndex]];
+            const winForm = getWinningForm(tempHand, gameState.furos[myPlayerIndex]);
+             if (winForm) {
+                 const winContext = { hand: tempHand, furo: gameState.furos[myPlayerIndex], winTile: gameState.drawnTile, isTsumo: true, isRiichi: true, isIppatsu: gameState.isIppatsu[myPlayerIndex], isRinshan: !!gameState.lastKanContext, isChankan: false, dora: gameState.dora, uraDora: [], bakaze: gameState.bakaze, jikaze: gameState.jikazes[myPlayerIndex] };
+                 if (checkYaku(winContext).totalHan > 0) {
+                     actionsToShow.ron = { type: 'ツモ', handler: () => sendActionCb({ type: 'tsumo' }) };
+                 }
+             }
+         } else {
+            actionButtonsContainer.style.display = 'none';
+            return;
+         }
+    }
     
-    actionButtonsContainer.style.display = 'flex'; // コンテナを表示
-    const actionsToShow = {};
-
-    // 自分のターンのアクション（ツモ、リーチ、カンなど）
+    actionButtonsContainer.style.display = 'flex';
+    
     if (myTurnActions) {
-        const turnActions = gameState.turnActions;
-        
-        if (turnActions.isDeclaringRiichi) {
-             infoEl.textContent = "捨てる牌を選んでください（リーチ）";
-             return;
-        }
-        
-        if (turnActions.canTsumo) {
-            actionsToShow.ron = { type: 'ツモ', handler: () => sendActionCb({ type: 'tsumo' }) };
-        }
-        if (turnActions.canRiichi) {
-            actionsToShow.riichi = { type: 'リーチ', handler: () => sendActionCb({ type: 'riichi' }) };
-        }
-        if (turnActions.canKyuKyu) {
-            actionsToShow.kyukyu = { type: '九種九牌', handler: () => sendActionCb({ type: 'kyukyu' }) };
-        }
-        
+        if(myTurnActions.canTsumo) actionsToShow.ron = { type: 'ツモ', handler: () => sendActionCb({ type: 'tsumo' }) };
+        if(myTurnActions.canRiichi && !myTurnActions.isDeclaringRiichi) actionsToShow.riichi = { type: 'リーチ', handler: () => sendActionCb({ type: 'riichi' }) };
+        if(myTurnActions.canKyuKyu) actionsToShow.kyukyu = { type: '九種九牌', handler: () => sendActionCb({ type: 'kyukyu' }) };
+
         const kanChoices = [
-            ...(turnActions.canAnkan || []).map(tile => ({ tile, kanType: 'ankan', meld: [tile, tile, tile, tile] })),
-            ...(turnActions.canKakan || []).map(tile => ({ tile, kanType: 'kakan', meld: [tile, tile, tile, tile] }))
+            ...myTurnActions.canAnkan.map(t => ({ tile: t, kanType: 'ankan' })),
+            ...myTurnActions.canKakan.map(t => ({ tile: t, kanType: 'kakan' }))
         ];
-        
-        if (kanChoices.length > 0) {
-            actionsToShow.kan = {
-                type: 'カン',
-                handler: () => {
-                    if (kanChoices.length === 1) {
-                        sendActionCb({ type: 'kan', ...kanChoices[0] });
-                    } else {
-                        showChoiceModal('kan', kanChoices, (selectedChoice) => {
-                            sendActionCb({ type: 'kan', ...selectedChoice });
-                        });
-                    }
-                },
-                previews: kanChoices.length === 1 ? kanChoices[0].meld : null // 単一の場合のみ直接プレビュー
-            };
-        }
-        
-        // ★ リーチ中でない場合のみ、スキップ（ツモ切り）ボタンを表示
-        if (Object.keys(actionsToShow).length > 0 && !gameState.isRiichi[myPlayerIndex]) {
-            if (gameState.drawnTile) {
-                 actionsToShow.skip = { type: 'スキップ', handler: () => sendDiscardCb(gameState.drawnTile) };
-            }
+        if (kanChoices.length === 1) {
+            actionsToShow.kan = { type: 'カン', handler: () => sendActionCb({ type: 'kan', ...kanChoices[0] }) };
+        } else if (kanChoices.length > 1) {
+            actionsToShow.kan = { type: 'カン', handler: () => showChoiceModal('カン', kanChoices.map(c => ({ meld: [c.tile, c.tile, c.tile, c.tile], ...c })), choice => sendActionCb({ type: 'kan', ...choice })) };
         }
     }
 
-    // 他家の捨て牌に対するアクション（ロン、ポン、チーなど）
     if (myWaitingActions) {
-        const possible = myWaitingActions;
-        const discardedTile = gameState.waitingForAction.tile;
-        
-        if (possible.canRon) actionsToShow.ron = { type: 'ロン', handler: () => sendActionCb({ type: 'ron' }) };
-        
-        if (possible.canPon) {
-            actionsToShow.pon = {
-                type: 'ポン',
-                handler: () => sendActionCb({ type: 'pon' }),
-                previews: [discardedTile, discardedTile, discardedTile]
-            };
+        if(myWaitingActions.canRon) actionsToShow.ron = { type: 'ロン', handler: () => sendActionCb({ type: 'ron' }) };
+        if(myWaitingActions.canPon) actionsToShow.pon = { type: 'ポン', handler: () => sendActionCb({ type: 'pon' }) };
+        if(myWaitingActions.canDaiminkan) actionsToShow.kan = { type: 'カン', handler: () => sendActionCb({ type: 'daiminkan' }) };
+        if(myWaitingActions.canChi.length === 1) {
+             actionsToShow.chi = { type: 'チー', handler: () => sendActionCb({ type: 'chi', tiles: myWaitingActions.canChi[0] }) };
+        } else if (myWaitingActions.canChi.length > 1) {
+            actionsToShow.chi = { type: 'チー', handler: () => showChoiceModal('チー', myWaitingActions.canChi.map(c => ({ meld: c, tiles: c })), choice => sendActionCb({ type: 'chi', tiles: choice.tiles })) };
         }
-        
-        if (possible.canDaiminkan) {
-            actionsToShow.kan = {
-                type: 'カン',
-                handler: () => sendActionCb({ type: 'daiminkan' }),
-                previews: [discardedTile, discardedTile, discardedTile, discardedTile]
-            };
-        }
-        
-        if (possible.canChi && possible.canChi.length > 0) {
-            const chiChoices = possible.canChi.map(choice => ({ tiles: choice, meld: [...choice, discardedTile].sort(tileSort) }));
-            actionsToShow.chi = {
-                type: 'チー',
-                handler: () => {
-                    if (chiChoices.length === 1) {
-                        sendActionCb({ type: 'chi', tiles: chiChoices[0].tiles });
-                    } else {
-                        showChoiceModal('chi', chiChoices, (selected) => {
-                            sendActionCb({ type: 'chi', tiles: selected.tiles });
-                        });
-                    }
-                },
-                previews: chiChoices.length === 1 ? chiChoices[0].meld : null // 単一の場合のみ直接プレビュー
-            };
-        }
-        actionsToShow.skip = { type: 'スキップ', handler: () => sendActionCb({ type: 'skip' }) };
-    }
 
+        if (Object.keys(actionsToShow).length > 0) {
+            actionsToShow.skip = { type: 'スキップ', handler: () => sendActionCb({ type: 'skip' }) };
+        }
+    }
+    
     showActionButtons(actionsToShow);
 
-    // リーチ後の自動打牌ロジック
-    // const isMyTurnAndRiichi = gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex]; // (重複のためコメントアウト)
     const hasDrawnTile = gameState.drawnTile !== null;
-
-    // 自分のターンでリーチ中、ツモ牌があり、かつ「ツモ」や「カン」のアクションがない場合
     if (isMyTurnAndRiichi && hasDrawnTile && !actionsToShow.ron && !actionsToShow.kan) {
-        // 表示されているボタンを一旦すべて隠す
         hideActionButtons();
-        // 0.5秒後にツモ牌を自動で捨てる
         setTimeout(() => {
-            // タイムアウトまでの間に状況が変わっていないか再確認
-            // (例: 非常に短い時間でサーバーから別の更新が来た場合など)
             if (gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex] && gameState.drawnTile) {
                 console.log(`Auto-discarding ${gameState.drawnTile} due to Riichi.`);
                 sendDiscardCb(gameState.drawnTile);
             }
-        }, 500); // 500ミリ秒の遅延
+        }, 800);
     }
 }
+
+function handleSpecialActions(gameState, myPlayerIndex, sendActionCb) {
+    const pa = gameState.pendingSpecialAction;
+    const existingModal = document.getElementById('special-action-modal');
+
+    if (!pa || pa.playerIndex !== myPlayerIndex) {
+        if (existingModal) existingModal.remove();
+        return;
+    }
+    
+    if (pa.type === 'nanawatashi') {
+        if (!existingModal) showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb);
+    } else {
+        if (existingModal) existingModal.remove();
+    }
+}
+
+
+function showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb) {
+    const modal = document.createElement('div');
+    modal.id = 'special-action-modal';
+    modal.className = 'modal-overlay';
+    
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    
+    let selectedTile = null;
+    let selectedTarget = null;
+
+    const header = document.createElement('h3');
+    header.textContent = '7わたし：渡す牌と相手を選択';
+    content.appendChild(header);
+
+    const handContainer = document.createElement('div');
+    handContainer.innerHTML = '<h4>渡す牌を選んでください</h4>';
+    const handTilesDiv = document.createElement('div');
+    handTilesDiv.style.display = 'flex';
+    handTilesDiv.style.flexWrap = 'wrap';
+    handTilesDiv.style.gap = '5px';
+    
+    // Sort unique tiles from hand for consistent display
+    [...new Set(gameState.hands[myPlayerIndex])].sort(tileSort).forEach(tile => {
+        const img = createTileImage(tile, () => {
+            selectedTile = tile;
+            Array.from(handTilesDiv.children).forEach(c => c.style.border = '2px solid transparent');
+            img.style.border = '2px solid #ffdd00';
+            img.style.boxShadow = '0 0 8px #ffdd00';
+        });
+        img.style.cursor = 'pointer';
+        img.style.border = '2px solid transparent';
+        handTilesDiv.appendChild(img);
+    });
+    handContainer.appendChild(handTilesDiv);
+
+    const playerContainer = document.createElement('div');
+    playerContainer.innerHTML = '<h4 style="margin-top: 15px;">渡す相手を選んでください</h4>';
+    const playerButtonsDiv = document.createElement('div');
+    playerButtonsDiv.style.display = 'flex';
+    playerButtonsDiv.style.gap = '10px';
+    playerButtonsDiv.style.marginTop = '5px';
+
+    for(let i=0; i<4; i++){
+        if (i === myPlayerIndex) continue;
+        if (gameState.isRiichi[i]) continue; // Cannot give to a player in Riichi
+
+        const btn = document.createElement('button');
+        btn.textContent = `Player ${i+1}`;
+        btn.onclick = () => {
+            selectedTarget = i;
+            Array.from(playerButtonsDiv.children).forEach(c => c.style.backgroundColor = '');
+            btn.style.backgroundColor = '#ffdd00';
+        };
+        playerButtonsDiv.appendChild(btn);
+    }
+    playerContainer.appendChild(playerButtonsDiv);
+
+    const actionArea = document.createElement('div');
+    actionArea.style.marginTop = '20px';
+    actionArea.style.textAlign = 'center';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.textContent = '決定';
+    confirmBtn.style.padding = '8px 16px';
+    confirmBtn.onclick = () => {
+        if (selectedTile && selectedTarget !== null) {
+            sendActionCb({
+                type: 'nanawatashi_select',
+                tileToGive: selectedTile,
+                targetPlayerIndex: selectedTarget
+            });
+            modal.remove();
+        } else {
+            alert('渡す牌と相手を選んでください。');
+        }
+    };
+
+    // No cancel button to prevent accidental game state lock. Player must choose or time out.
+    
+    actionArea.appendChild(confirmBtn);
+
+    content.appendChild(handContainer);
+    content.appendChild(playerContainer);
+    content.appendChild(actionArea);
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+}
+
 
 
 function displayRoundResult(result, myPlayerIndex) {
@@ -485,12 +564,15 @@ function displayRoundResult(result, myPlayerIndex) {
     let contentHTML = '';
 
     if (result.type === 'win') {
-        const { winnerIndex, fromIndex, winTile, isTsumo, hand, furo, yakuList, fu, han, scoreResult, doraIndicators, uraDoraIndicators } = result;
-        const winnerName = winnerIndex === myPlayerIndex ? 'あなた' : 'Player ' + (winnerIndex + 1);
-        const fromPlayerName = fromIndex === winnerIndex ? '' : (fromIndex === myPlayerIndex ? 'あなた' : 'Player ' + (fromIndex + 1));
+        const { winnerIndex, fromIndex, winTile, isTsumo, hand, furo, yakuList, fu, han, scoreResult, doraIndicators, uraDoraIndicators, isRevolution, originalHan } = result;
+        const winnerName = winnerIndex === myPlayerIndex ? 'あなた' : 'P' + (winnerIndex + 1);
+        const fromPlayerName = fromIndex === winnerIndex ? '' : (fromIndex === myPlayerIndex ? 'あなた' : 'P' + (fromIndex + 1));
         const titleText = isTsumo ? `${winnerName} のツモ和了` : `${winnerName} のロン和了 (放銃: ${fromPlayerName})`;
 
         contentHTML += `<h3>${titleText}</h3>`;
+        if (isRevolution) {
+            contentHTML += `<h4 style="color: #ff00ff; text-align: center;">革命適用！</h4>`;
+        }
         contentHTML += '<div>';
         hand.forEach(t => {
             const img = createTileImage(t, null, true);
@@ -523,7 +605,11 @@ function displayRoundResult(result, myPlayerIndex) {
         }
         contentHTML += '</table><hr>';
         const scoreName = scoreResult.name ? ` (${scoreResult.name})` : '';
-        contentHTML += `<div class="total-score">${han}翻 ${fu}符 <b>${scoreResult.total}点</b>${scoreName}</div>`;
+        if (isRevolution && !scoreResult.name?.includes("役満")) {
+            contentHTML += `<div class="total-score"><s>${originalHan}翻</s> → ${han}翻 ${fu}符 <b>${scoreResult.total}点</b>${scoreName}</div>`;
+        } else {
+            contentHTML += `<div class="total-score">${han}翻 ${fu}符 <b>${scoreResult.total}点</b>${scoreName}</div>`;
+        }
         if (scoreResult.breakdown) {
              contentHTML += `<div class="score-breakdown">(${scoreResult.breakdown})</div>`;
         }
@@ -539,7 +625,7 @@ function displayRoundResult(result, myPlayerIndex) {
         contentHTML += `<h3>${drawReasonMap[result.drawType] || '途中流局'}</h3>`;
         
         if (result.drawType === 'exhaustive') {
-            const tenpaiNames = result.tenpaiPlayers.map(pIdx => pIdx === myPlayerIndex ? 'あなた' : `Player ${pIdx + 1}`);
+            const tenpaiNames = result.tenpaiPlayers.map(pIdx => pIdx === myPlayerIndex ? 'あなた' : `P ${pIdx + 1}`);
             if (tenpaiNames.length > 0) {
                  contentHTML += `<p>聴牌者: ${tenpaiNames.join(', ')}</p>`;
             } else {
@@ -575,14 +661,12 @@ function createTileImage(tile, onClickFn = null, isSmall = false) {
 }
 
 function hideActionButtons() {
-    actionButtonsContainer.style.display = 'none'; // コンテナ自体を隠す
+    actionButtonsContainer.style.display = 'none';
     Object.values(actionButtons).forEach(btn => {
         btn.style.display = 'none';
         btn.onclick = null;
-        // プレビュー用の子要素をクリア
         const preview = btn.querySelector('.action-preview');
         if (preview) preview.remove();
-        // ボタンのテキストを元に戻す（"ツモ"→"ロン"など）
         if(btn.id === 'ron') btn.textContent = 'ロン';
     });
     const choiceDiv = document.querySelector(".choice-modal");
@@ -596,7 +680,6 @@ function showActionButtons(actions) {
             const btn = actionButtons[actionKey];
             btn.style.display = 'inline-block';
             
-            // ボタンのテキストとプレビューを設定
             let buttonContent = `<span>${actions[actionKey].type}</span>`;
             if (actions[actionKey].previews) {
                 const previewContainer = document.createElement('div');
@@ -627,7 +710,6 @@ function showChoiceModal(type, choices, callback) {
         const btn = document.createElement('button');
         btn.className = 'choice-button';
 
-        // 'kan'や'chi'の meld プロパティを使ってプレビューを作成
         const meld = choice.meld;
         const choiceContainer = document.createElement('div');
         choiceContainer.className = 'action-preview';
@@ -652,12 +734,45 @@ function showChoiceModal(type, choices, callback) {
     cancelBtn.onclick = (e) => {
         e.stopPropagation();
         modal.remove();
-        // スキップと同じ挙動をさせる
-        sendAction({ type: 'skip' });
-        hideActionButtons();
+        // Skip is handled by timeout on server, or user can click skip button again
     };
     modal.appendChild(cancelBtn);
     
-    // actionButtonsContainer の中にモーダルを追加
     actionButtonsContainer.appendChild(modal);
+}
+
+function showNanaWatashiNotification(event, myPlayerIndex) {
+    let notificationEl = document.getElementById('nanawatashi-notification');
+    if (!notificationEl) {
+        notificationEl = document.createElement('div');
+        notificationEl.id = 'nanawatashi-notification';
+        document.body.appendChild(notificationEl);
+    }
+
+    const { from, to, tile } = event;
+    let message = '';
+
+    if (to === myPlayerIndex) {
+        message = `P${from + 1} から牌を受け取りました`;
+    } else {
+        message = `P${from + 1} が P${to + 1} に牌を渡しました`;
+    }
+    
+    notificationEl.innerHTML = ''; // Clear previous content
+    const textNode = document.createElement('div');
+    textNode.textContent = message;
+    
+    // Only show the actual tile to the receiver
+    if (to === myPlayerIndex) {
+        const tileImg = createTileImage(tile, null, true);
+        notificationEl.appendChild(tileImg);
+    }
+    
+    notificationEl.insertBefore(textNode, notificationEl.firstChild);
+
+    notificationEl.style.display = 'flex';
+
+    setTimeout(() => {
+        notificationEl.style.display = 'none';
+    }, 2500); // Show for 2.5 seconds
 }
