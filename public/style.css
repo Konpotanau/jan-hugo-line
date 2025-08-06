@@ -421,3 +421,28 @@ h1 {
     box-shadow: 0 0 12px 3px rgba(255, 255, 0, 0.8);
     border: 1px solid yellow;
 }
+
+#special-event-notification {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 6em;
+    font-weight: bold;
+    color: #ffdd00;
+    text-shadow: 3px 3px 6px #000;
+    z-index: 2000;
+    pointer-events: none;
+    opacity: 0;
+}
+
+@keyframes special-event-animation {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+    20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+}
+
+.animate-special-event {
+    animation: special-event-animation 2s ease-in-out forwards;
+}

@@ -53,10 +53,13 @@ socket.onmessage = function(event) {
         case 'round_result':
             isGameStarted = false;
             displayRoundResult(data.result, myPlayerIndex);
+            hideActionButtons(); // ラウンド結果表示時にアクションボタンを隠す
             break;
         case 'system_message':
             const msg = data.message;
-            if (typeof msg === 'object' && msg.type === 'nanawatashi_event') {
+            if (typeof msg === 'object' && msg.type === 'special_event') {
+                showSpecialEvent(msg.event);
+            } else if (typeof msg === 'object' && msg.type === 'nanawatashi_event') {
                 showNanaWatashiNotification(msg, myPlayerIndex);
                 // Update the general info text for all players
                 infoEl.textContent = `P${msg.from + 1}がP${msg.to + 1}に牌を渡しました。`;

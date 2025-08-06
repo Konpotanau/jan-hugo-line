@@ -410,7 +410,7 @@ class Game {
                     timeout: setTimeout(() => this.handleAutoDiscard(discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
                 };
                 console.log(`Player ${discarderIndex} が9捨てを行いました。追加の打牌待ち。`);
-                this.callbacks.onSystemMessage("「9捨て」！もう1枚捨ててください。");
+                this.callbacks.onSystemMessage({ type: 'special_event', event: 'kyusute' });
                 this.callbacks.onUpdate();
                 const isCpu = this.players.some(p => p.playerIndex === discarderIndex && p.isCpu);
                 if (isCpu) {
@@ -428,7 +428,7 @@ class Game {
                     timeout: setTimeout(() => this.handleAutoDiscard(discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
                 };
                 console.log(`Player ${discarderIndex} が7わたしを行いました。選択待ち。`);
-                this.callbacks.onSystemMessage("「7わたし」！渡す牌と相手を選んでください。");
+                this.callbacks.onSystemMessage({ type: 'special_event', event: 'nanawatashi' });
                 this.callbacks.onUpdate();
                 const isCpu = this.players.some(p => p.playerIndex === discarderIndex && p.isCpu);
                 if (isCpu) {
@@ -732,7 +732,7 @@ class Game {
                         timeout: setTimeout(() => this.handleAutoDiscard(wa.discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
                     };
                     console.log(`Player ${wa.discarderIndex} が9捨てを行いました。追加の打牌待ち。`);
-                    this.callbacks.onSystemMessage("「9捨て」！もう1枚捨ててください。");
+                    this.callbacks.onSystemMessage({ type: 'special_event', event: 'kyusute' });
                     this.callbacks.onUpdate();
                     if(this.players.find(p=>p.playerIndex === wa.discarderIndex && p.isCpu)){
                          setTimeout(() => this.handleCpuTurn(wa.discarderIndex), 100 + Math.random() * 1000);
@@ -749,7 +749,7 @@ class Game {
                         timeout: setTimeout(() => this.handleAutoDiscard(wa.discarderIndex), SPECIAL_ACTION_TIMEOUT_MS)
                     };
                     console.log(`Player ${wa.discarderIndex} が7わたしを行いました。選択待ち。`);
-                    this.callbacks.onSystemMessage("「7わたし」！渡す牌と相手を選んでください。");
+                    this.callbacks.onSystemMessage({ type: 'special_event', event: 'nanawatashi' });
                     this.callbacks.onUpdate();
                      if(this.players.find(p=>p.playerIndex === wa.discarderIndex && p.isCpu)){
                          setTimeout(() => this.handleCpuTurn(wa.discarderIndex), 100 + Math.random() * 1000);
@@ -864,11 +864,11 @@ class Game {
             this.state.turnIndex = (lastPlayerIndex + 2) % 4;
             const skippedPlayerIndex = (lastPlayerIndex + 1) % 4;
             console.log(`5とばし！ Player ${lastPlayerIndex} -> Player ${this.state.turnIndex} (Player ${skippedPlayerIndex} をスキップ)`);
-            this.callbacks.onSystemMessage("「5とばし」により、ターンがスキップされました。");
+            this.callbacks.onSystemMessage({ type: 'special_event', event: 'gotobashi' });
         } else if (isHachigiri) {
             this.state.turnIndex = lastPlayerIndex;
             console.log(`8切り！ Player ${lastPlayerIndex} がもう一度ツモります。`);
-            this.callbacks.onSystemMessage("「8切り」により、同じプレイヤーがもう一度行動します。");
+            this.callbacks.onSystemMessage({ type: 'special_event', event: 'hachigiri' });
         } else {
             this.state.turnIndex = (lastPlayerIndex + 1) % 4;
         }
@@ -1062,28 +1062,35 @@ class Game {
 
             } else if (pa.type === 'nanawatashi') {
                 const hand = this.state.hands[playerIndex];
-                if (!hand || hand.length === 0) {
-                    console.log(`CPU ${playerIndex} (7わたし)は渡す牌がないため、ターンを終了します。`);
+                
+                const possibleTargets = this.players
+                    .map(p => p.playerIndex)
+                    .filter(pIdx => pIdx !== playerIndex && !this.state.isRiichi[pIdx]);
+
+                if (!hand || hand.length === 0 || possibleTargets.length === 0) {
+                    console.log(`CPU ${playerIndex} (7わたし)は渡す牌または相手がないため、ターンを終了します。`);
                     this.state.pendingSpecialAction = null;
                     this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
                     return;
                 }
                 const tileToGive = this.findMostUselessTile(hand, playerIndex);
-
-                const possibleTargets = this.players
-                    .map(p => p.playerIndex)
-                    .filter(pIdx => pIdx !== playerIndex && !this.state.isRiichi[pIdx]);
-
-                if (possibleTargets.length > 0 && tileToGive) {
+                
+                if (tileToGive) {
                     const targetPlayerIndex = possibleTargets[Math.floor(Math.random() * possibleTargets.length)];
                     console.log(`CPU ${playerIndex} (7わたし)が ${tileToGive} を Player ${targetPlayerIndex} に渡します。`);
                     setTimeout(() => this.handlePlayerAction(playerIndex, { type: 'nanawatashi_select', tileToGive, targetPlayerIndex }), 100 + Math.random() * 1000);
                 } else {
-                    console.log(`CPU ${playerIndex} (7わたし)は渡す相手または牌がないため、ターンを終了します。`);
+                    console.log(`CPU ${playerIndex} (7わたし)は渡す牌がないため、ターンを終了します。`);
                     this.state.pendingSpecialAction = null;
                     this.proceedToNextTurn(playerIndex, this.state.lastDiscard?.tile);
                 }
             }
+            return;
+        }
+        
+        if (this.state.hands[playerIndex].length === 0) {
+            console.log(`CPU ${playerIndex} は手牌がないため、ターンをスキップします。`);
+            this.proceedToNextTurn(playerIndex, null);
             return;
         }
 

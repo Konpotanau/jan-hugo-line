@@ -16,6 +16,7 @@ const timerDisplayEl = document.getElementById("timer-display");
 const actionButtonsContainer = document.getElementById("action-buttons");
 const tenpaiInfoContainerEl = document.getElementById("tenpai-info-container");
 const revolutionStatusEl = document.getElementById("revolution-status");
+const specialEventNotificationEl = document.getElementById('special-event-notification');
 const actionButtons = {
     riichi: document.getElementById("riichi"),
     pon: document.getElementById("pon"),
@@ -86,15 +87,15 @@ function renderTenpaiInfo(gameState, myPlayerIndex) {
 
     const isMyTurn = gameState.turnIndex === myPlayerIndex;
     const isMyRiichi = gameState.isRiichi[myPlayerIndex];
-    const hand = gameState.hands[myPlayerIndex];
-    // This condition correctly determines if the player should be able to discard.
-    const canDiscard = isMyTurn;
 
+    // 自分のターンであり、かつ他プレイヤーのアクションを待っている状態（打牌直後など）ではない場合にのみ表示する
+    const canDisplayTenpaiInfo = isMyTurn && !gameState.waitingForAction;
 
-    if (!canDiscard || isMyRiichi) {
+    if (!canDisplayTenpaiInfo || isMyRiichi) {
         return;
     }
 
+    const hand = gameState.hands[myPlayerIndex];
     const furo = gameState.furos[myPlayerIndex];
     const tenpaiDiscards = new Map();
 
@@ -468,6 +469,7 @@ function handleSpecialActions(gameState, myPlayerIndex, sendActionCb) {
 }
 
 
+
 function showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb) {
     const modal = document.createElement('div');
     modal.id = 'special-action-modal';
@@ -775,4 +777,23 @@ function showNanaWatashiNotification(event, myPlayerIndex) {
     setTimeout(() => {
         notificationEl.style.display = 'none';
     }, 2500); // Show for 2.5 seconds
+}
+
+function showSpecialEvent(eventName) {
+    const textMap = {
+        'gotobashi': '５とばし！',
+        'hachigiri': '８切り！',
+        'kyusute': '９捨て！',
+        'nanawatashi': '７わたし！'
+    };
+    const text = textMap[eventName];
+    if (!text || !specialEventNotificationEl) return;
+
+    specialEventNotificationEl.textContent = text;
+    specialEventNotificationEl.classList.remove('animate-special-event');
+    
+    // アニメーションを再開するためのリフロー
+    void specialEventNotificationEl.offsetWidth; 
+    
+    specialEventNotificationEl.classList.add('animate-special-event');
 }
