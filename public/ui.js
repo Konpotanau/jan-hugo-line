@@ -1,5 +1,17 @@
 // ui.js
 
+// --- ★ AudioContextを受け取るためのグローバル変数 ---
+let audioContext = null;
+
+/**
+ * game.jsからAudioContextを受け取るための関数
+ * @param {AudioContext} ctx 
+ */
+function setAudioContext(ctx) {
+    audioContext = ctx;
+}
+
+
 // --- DOM Elements ---
 const handContainers = [document.getElementById("hand-0"), document.getElementById("hand-1"), document.getElementById("hand-2"), document.getElementById("hand-3")];
 const discardContainers = [document.getElementById("discard-0"), document.getElementById("discard-1"), document.getElementById("discard-2"), document.getElementById("discard-3")];
@@ -38,6 +50,11 @@ let timerAnimationId = null;
 let wasActionContainerVisible = false; // For playing sound once
 
 function playSound(soundFile) {
+    // ★ AudioContextが有効でなければ再生しない
+    if (!audioContext || audioContext.state !== 'running') {
+        console.log("AudioContext not ready, skipping sound.");
+        return;
+    }
     try {
         const audio = new Audio(`bgm/${soundFile}`);
         audio.play().catch(e => console.error(`Audio play failed for ${soundFile}:`, e));
@@ -904,6 +921,38 @@ function showSpecialEvent(eventName) {
     void specialEventNotificationEl.offsetWidth; 
     
     specialEventNotificationEl.classList.add('animate-special-event');
+}
+
+function displayGameOver(result) {
+    const modal = document.getElementById('game-over-modal');
+    const tableBody = modal.querySelector('#ranking-table tbody');
+    const closeBtn = document.getElementById('close-game-over-modal');
+
+    tableBody.innerHTML = ''; // Clear previous results
+
+    const rankingBadges = ['🥇', '🥈', '🥉', ''];
+
+    result.ranking.forEach((player, index) => {
+        const row = tableBody.insertRow();
+        const rankCell = row.insertCell(0);
+        const nameCell = row.insertCell(1);
+        const scoreCell = row.insertCell(2);
+
+        rankCell.innerHTML = `${index + 1}位 ${rankingBadges[index] || ''}`;
+        nameCell.textContent = player.name;
+        scoreCell.textContent = `${player.score}点`;
+    });
+
+    closeBtn.onclick = () => {
+        modal.style.display = 'none';
+        // Show login screen to allow starting a new game
+        const loginOverlay = document.getElementById('login-overlay');
+        if (loginOverlay) {
+            loginOverlay.style.display = 'flex';
+        }
+    };
+
+    modal.style.display = 'flex';
 }
 
 // --- ★Event Listeners (ルールモーダル用) ---

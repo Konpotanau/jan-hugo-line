@@ -2,8 +2,44 @@
 let gameState = null;
 let myPlayerIndex = -1;
 let isGameStarted = false;
-// ★ AudioContextをグローバルで定義
-let audioContext = null;
+// ★ AudioContextはui.jsで定義されているものを共有して使用
+
+// ★ BGM管理オブジェクト
+const bgmManager = {
+    bgmNormal: null,
+    bgmRiichi: null,
+    currentBGM: null,
+    init: function() {
+        if (this.bgmNormal) return; // Already initialized
+        this.bgmNormal = new Audio('bgm/BGMNormal.mp3');
+        this.bgmNormal.loop = true;
+        this.bgmNormal.volume = 0.5;
+
+        this.bgmRiichi = new Audio('bgm/BGMrichi.mp3');
+        this.bgmRiichi.loop = true;
+        this.bgmRiichi.volume = 0.5;
+    },
+    play: function(type) {
+        if (!audioContext || audioContext.state !== 'running') return;
+        
+        const bgmToPlay = type === 'riichi' ? this.bgmRiichi : this.bgmNormal;
+        
+        if (this.currentBGM === bgmToPlay && !this.currentBGM.paused) {
+            return; // Already playing the correct BGM
+        }
+
+        this.stop();
+        
+        this.currentBGM = bgmToPlay;
+        this.currentBGM.play().catch(e => console.error(`BGM play failed for ${type}:`, e));
+    },
+    stop: function() {
+        if (this.bgmNormal) this.bgmNormal.pause();
+        if (this.bgmRiichi) this.bgmRiichi.pause();
+        if (this.currentBGM) this.currentBGM.currentTime = 0; // 曲を頭出しに戻す
+        this.currentBGM = null;
+    }
+};
 
 const getWebSocketURL = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -29,6 +65,11 @@ function unlockAudioContext() {
     if (!audioContext) {
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            // ★ ui.js に AudioContext を渡す
+            if (typeof setAudioContext === 'function') {
+                setAudioContext(audioContext);
+            }
+            bgmManager.init();
         } catch (e) {
             console.error("AudioContext is not supported.", e);
             return;
@@ -61,6 +102,10 @@ socket.onopen = function(event) {
     infoEl.textContent = "サーバーに接続しました。名前を入力してゲームを開始してください。";
 };
 
+// ★ 前回のゲーム状態を保持するための変数
+let lastDiscardInfo = null;
+let lastFuroCounts = [0, 0, 0, 0]; // ★ 他家の鳴き検知用
+
 socket.onmessage = function(event) {
     const data = JSON.parse(event.data);
 
@@ -76,16 +121,65 @@ socket.onmessage = function(event) {
             break;
         case 'update':
             if (data.state && myPlayerIndex !== -1) {
-                if (!isGameStarted && data.state.gameStarted) {
-                    isGameStarted = true;
+                // --- BGM & SE Control ---
+                const previousGameStarted = isGameStarted;
+                isGameStarted = data.state.gameStarted;
+                const isRevolution = data.state.isRevolution;
+
+                // 対局開始BGM
+                if (isGameStarted && !previousGameStarted) {
+                    bgmManager.play('normal');
                 }
+                
+                // ★ BGMロジック修正: 革命またはリーチでBGM変更
+                const someoneInRiichi = data.state.isRiichi.some(r => r);
+                if (isGameStarted) {
+                    if (isRevolution || someoneInRiichi) {
+                        bgmManager.play('riichi');
+                    } else {
+                        bgmManager.play('normal');
+                    }
+                }
+
+                // 他家の打牌SE
+                const newDiscard = data.state.lastDiscard;
+                if (newDiscard && 
+                    (newDiscard.player !== lastDiscardInfo?.player || newDiscard.discardIndex !== lastDiscardInfo?.discardIndex)) {
+                    if (newDiscard.player !== myPlayerIndex) {
+                        playSound('dahai.mp3');
+                    }
+                }
+                lastDiscardInfo = newDiscard ? {...newDiscard} : null;
+
+                // ★ 他家の鳴きSE
+                for (let i = 0; i < 4; i++) {
+                    if (i === myPlayerIndex) continue;
+                    const newFuroCount = data.state.furos[i].length;
+                    if (newFuroCount > lastFuroCounts[i]) {
+                        const newFuro = data.state.furos[i][newFuroCount - 1];
+                        if (newFuro.type === 'pon') playSound('pon.wav');
+                        if (newFuro.type === 'chi') playSound('chi.wav');
+                        if (newFuro.type.includes('kan')) playSound('kan.wav');
+                    }
+                }
+                lastFuroCounts = data.state.furos.map(f => f.length);
+                // --- End BGM & SE Control ---
+
                 gameState = data.state;
-                isGameStarted = gameState.gameStarted; // Update game status
                 renderAll(gameState, myPlayerIndex, handlePlayerDiscard, sendAction);
             }
             break;
         case 'round_result':
+             // ★ game_overイベントをここで処理
+            if (data.result.type === 'game_over') {
+                isGameStarted = false;
+                bgmManager.stop();
+                displayGameOver(data.result);
+                hideActionButtons();
+                break;
+            }
             isGameStarted = false;
+            bgmManager.stop(); // 局終了時にBGM停止
             // playerNamesをgameStateから取得して渡す
             displayRoundResult(data.result, myPlayerIndex, gameState.playerNames);
             hideActionButtons(); // ラウンド結果表示時にアクションボタンを隠す
@@ -112,6 +206,7 @@ socket.onmessage = function(event) {
 socket.onclose = function(event) {
     infoEl.textContent = "サーバーとの接続が切れました。ページをリロードしてください。";
     isGameStarted = false;
+    bgmManager.stop(); // 切断時にBGM停止
     loginOverlay.style.display = 'flex';
     myPlayerIndex = -1;
     gameState = null;
@@ -140,7 +235,7 @@ function handlePlayerDiscard(tile) {
         console.log("リーチ後はツモった牌以外は捨てられません。");
         return;
     }
-    playSound('dahai.mp3');
+    playSound('dahai.mp3'); // 自分の打牌音は即時再生
     socket.send(JSON.stringify({ type: 'discard', tile: tile }));
 }
 

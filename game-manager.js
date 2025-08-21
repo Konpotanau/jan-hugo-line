@@ -1077,10 +1077,10 @@ class Game {
             isOyaTenpai = tenpaiPlayers.includes(this.state.oyaIndex);
     
             if (tenpaiPlayers.length > 0 && tenpaiPlayers.length < 4) {
-                const payment = 3000 / tenpaiPlayers.length;
-                const receipt = 3000 / notenPlayers.length;
-                tenpaiPlayers.forEach(pIdx => this.state.scores[pIdx] += receipt);
-                notenPlayers.forEach(pIdx => this.state.scores[pIdx] -= payment);
+                const receiptPerTenpai = 3000 / tenpaiPlayers.length;
+                const paymentPerNoten = 3000 / notenPlayers.length;
+                tenpaiPlayers.forEach(pIdx => this.state.scores[pIdx] += receiptPerTenpai);
+                notenPlayers.forEach(pIdx => this.state.scores[pIdx] -= paymentPerNoten);
             }
         } else {
             isOyaTenpai = true;
@@ -1093,22 +1093,35 @@ class Game {
     }
     
     startNextRound(isRenchan) {
+        // ★ ゲーム終了条件をチェック: 南4局で、親が連荘しなかった場合
+        if (this.state.bakaze === "南" && this.state.kyoku === 4 && !isRenchan) {
+            console.log("ゲーム終了です。最終結果を計算します。");
+            const finalRanking = this.players
+                .map(p => ({
+                    name: this.state.playerNames[p.playerIndex] || `Player ${p.playerIndex + 1}`,
+                    score: this.state.scores[p.playerIndex]
+                }))
+                .sort((a, b) => b.score - a.score);
+
+            this.callbacks.onSystemMessage("ゲーム終了です。");
+            this.callbacks.onResult({ type: 'game_over', ranking: finalRanking });
+            return; // 新しいラウンドを開始しない
+        }
+
         if (isRenchan) {
             this.state.honba++;
         } else {
             this.state.honba = 0;
-            const currentOya = this.state.oyaIndex;
-            this.state.oyaIndex = (currentOya + 1) % 4;
+            this.state.oyaIndex = (this.state.oyaIndex + 1) % 4;
     
-            if (this.state.bakaze === "南" && this.state.kyoku === 4 && this.state.oyaIndex === 0) {
-                 this.callbacks.onSystemMessage("ゲーム終了です。");
-                 return;
-            }
-            if (currentOya === 3) {
-                this.state.bakaze = this.state.bakaze === "東" ? "南" : "西";
-                this.state.kyoku = 1;
+            if (this.state.kyoku === 4) {
+                 this.state.kyoku = 1;
+                 if (this.state.bakaze === "東") {
+                     this.state.bakaze = "南";
+                 }
+                 // 南4局が終わったらゲーム終了なので、西入は考慮しない
             } else {
-                this.state.kyoku++;
+                 this.state.kyoku++;
             }
         }
         this.setupNewRound();

@@ -635,3 +635,31 @@ h1 {
     min-width: 120px;
     display: inline-block;
 }
+
+#ranking-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 1.2em;
+}
+
+#ranking-table th, #ranking-table td {
+    padding: 12px;
+    text-align: center;
+    border-bottom: 1px solid #ddd;
+}
+
+#ranking-table th {
+    background-color: #f2f2f2;
+}
+
+#ranking-table tbody tr:nth-child(1) {
+    font-weight: bold;
+    color: #d4af37; /* Gold */
+}
+#ranking-table tbody tr:nth-child(2) {
+    color: #c0c0c0; /* Silver */
+}
+#ranking-table tbody tr:nth-child(3) {
+    color: #cd7f32; /* Bronze */
+}
