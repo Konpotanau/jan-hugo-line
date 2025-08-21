@@ -26,10 +26,25 @@ const actionButtons = {
     ron: document.getElementById("ron"),
     skip: document.getElementById("skip"),
 };
+// ★ルールモーダル関連の要素を取得
+const ruleButton = document.getElementById('rule-button');
+const ruleModal = document.getElementById('rule-modal');
+const closeRuleModalBtn = document.getElementById('close-rule-modal');
+
 
 // --- Core UI Logic ---
 
 let timerAnimationId = null;
+let wasActionContainerVisible = false; // For playing sound once
+
+function playSound(soundFile) {
+    try {
+        const audio = new Audio(`bgm/${soundFile}`);
+        audio.play().catch(e => console.error(`Audio play failed for ${soundFile}:`, e));
+    } catch (e) {
+        console.error(`Error playing sound: ${soundFile}`, e);
+    }
+}
 
 function renderAll(gameState, myPlayerIndex, sendDiscardCb, sendActionCb) {
     if (!gameState || myPlayerIndex === -1) return;
@@ -302,13 +317,14 @@ function renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx) {
     const div = playerInfoDivs[displayIdx];
     const jikazeChar = gameState.jikazes[playerIdx];
     const isOya = gameState.oyaIndex === playerIdx;
-    const handLength = gameState.hands[playerIdx].length;
+    const handLength = gameState.hands[playerIdx]?.length || 0;
+    const playerName = gameState.playerNames[playerIdx] || `Player ${playerIdx + 1}`;
 
     const handCountSpan = div.querySelector('.player-hand-info');
     if (handCountSpan) {
         const isTurn = gameState.turnIndex === playerIdx;
         let isTenpaiShape = false;
-
+        
         // n面子1雀頭の聴牌形（または和了形）かどうかの判定 (n対子は考慮しない)
         if (isTurn) { // ツモ後の状態 (3n+2枚)
             if (handLength >= 2 && (handLength - 2) % 3 === 0) {
@@ -320,7 +336,7 @@ function renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx) {
             }
         }
         
-        handCountSpan.textContent = `${playerIdx === myPlayerIndex ? 'あなた' : 'P' + (playerIdx + 1)} (${jikazeChar}${isOya ? '家' : ''}) [${handLength}枚]`;
+        handCountSpan.textContent = `${playerName} (${jikazeChar}${isOya ? '家' : ''}) [${handLength}枚]`;
         handCountSpan.classList.toggle('agari-possible', isTenpaiShape);
     }
 
@@ -335,9 +351,12 @@ function renderCommonInfo(gameState) {
     roundInfoEl.innerHTML = `${gameState.bakaze}${gameState.kyoku}局 ${gameState.honba}本場`;
     riichiSticksEl.textContent = `供託: ${gameState.riichiSticks}本`;
 
+    // Revolution status and visual effect
     if (gameState.isRevolution) {
+        document.body.classList.add('revolution-active');
         revolutionStatusEl.textContent = "革命中！";
     } else {
+        document.body.classList.remove('revolution-active');
         revolutionStatusEl.textContent = "";
     }
 }
@@ -370,7 +389,7 @@ function updateInfoText(gameState, myPlayerIndex) {
              infoEl.textContent = "あなたのターンです。鳴いた後、捨てる牌を選んでください。";
         }
     } else {
-        const turnPlayerName = `P${gameState.turnIndex + 1}`;
+        const turnPlayerName = gameState.playerNames[gameState.turnIndex] || `P${gameState.turnIndex + 1}`;
         infoEl.textContent = `${turnPlayerName} のターンです。`;
     }
 }
@@ -396,7 +415,7 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
              if (winForm) {
                  const winContext = { hand: tempHand, furo: gameState.furos[myPlayerIndex], winTile: gameState.drawnTile, isTsumo: true, isRiichi: true, isIppatsu: gameState.isIppatsu[myPlayerIndex], isRinshan: !!gameState.lastKanContext, isChankan: false, dora: gameState.dora, uraDora: [], bakaze: gameState.bakaze, jikaze: gameState.jikazes[myPlayerIndex] };
                  if (checkYaku(winContext).totalHan > 0) {
-                     actionsToShow.ron = { type: 'ツモ', handler: () => sendActionCb({ type: 'tsumo' }) };
+                     actionsToShow.ron = { type: 'ツモ', handler: () => { playSound('tsumo.wav'); sendActionCb({ type: 'tsumo' }); } };
                  }
              }
          } else {
@@ -405,11 +424,11 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
          }
     }
     
-    actionButtonsContainer.style.display = 'flex';
-    
+    let shouldShowContainer = false;
+
     if (myTurnActions) {
-        if(myTurnActions.canTsumo) actionsToShow.ron = { type: 'ツモ', handler: () => sendActionCb({ type: 'tsumo' }) };
-        if(myTurnActions.canRiichi && !myTurnActions.isDeclaringRiichi) actionsToShow.riichi = { type: 'リーチ', handler: () => sendActionCb({ type: 'riichi' }) };
+        if(myTurnActions.canTsumo) actionsToShow.ron = { type: 'ツモ', handler: () => { playSound('tsumo.wav'); sendActionCb({ type: 'tsumo' }); } };
+        if(myTurnActions.canRiichi && !myTurnActions.isDeclaringRiichi) actionsToShow.riichi = { type: 'リーチ', handler: () => { playSound('richi.wav'); sendActionCb({ type: 'riichi' }); } };
         if(myTurnActions.canKyuKyu) actionsToShow.kyukyu = { type: '九種九牌', handler: () => sendActionCb({ type: 'kyukyu' }) };
 
         const kanChoices = [
@@ -417,26 +436,42 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
             ...myTurnActions.canKakan.map(t => ({ tile: t, kanType: 'kakan' }))
         ];
         if (kanChoices.length === 1) {
-            actionsToShow.kan = { type: 'カン', handler: () => sendActionCb({ type: 'kan', ...kanChoices[0] }) };
+            actionsToShow.kan = { type: 'カン', handler: () => { playSound('kan.wav'); sendActionCb({ type: 'kan', ...kanChoices[0] }); } };
         } else if (kanChoices.length > 1) {
-            actionsToShow.kan = { type: 'カン', handler: () => showChoiceModal('カン', kanChoices.map(c => ({ meld: [c.tile, c.tile, c.tile, c.tile], ...c })), choice => sendActionCb({ type: 'kan', ...choice })) };
+            actionsToShow.kan = { type: 'カン', handler: () => { playSound('kan.wav'); showChoiceModal('カン', kanChoices.map(c => ({ meld: [c.tile, c.tile, c.tile, c.tile], ...c })), choice => sendActionCb({ type: 'kan', ...choice })); } };
         }
+        shouldShowContainer = true;
     }
 
     if (myWaitingActions) {
-        if(myWaitingActions.canRon) actionsToShow.ron = { type: 'ロン', handler: () => sendActionCb({ type: 'ron' }) };
-        if(myWaitingActions.canPon) actionsToShow.pon = { type: 'ポン', handler: () => sendActionCb({ type: 'pon' }) };
-        if(myWaitingActions.canDaiminkan) actionsToShow.kan = { type: 'カン', handler: () => sendActionCb({ type: 'daiminkan' }) };
+        if(myWaitingActions.canRon) actionsToShow.ron = { type: 'ロン', handler: () => { playSound('ron.wav'); sendActionCb({ type: 'ron' }); } };
+        if(myWaitingActions.canPon) actionsToShow.pon = { type: 'ポン', handler: () => { playSound('pon.wav'); sendActionCb({ type: 'pon' }); } };
+        if(myWaitingActions.canDaiminkan) actionsToShow.kan = { type: 'カン', handler: () => { playSound('kan.wav'); sendActionCb({ type: 'daiminkan' }); } };
         if(myWaitingActions.canChi.length === 1) {
-             actionsToShow.chi = { type: 'チー', handler: () => sendActionCb({ type: 'chi', tiles: myWaitingActions.canChi[0] }) };
+             actionsToShow.chi = { type: 'チー', handler: () => { playSound('chi.wav'); sendActionCb({ type: 'chi', tiles: myWaitingActions.canChi[0] }); } };
         } else if (myWaitingActions.canChi.length > 1) {
-            actionsToShow.chi = { type: 'チー', handler: () => showChoiceModal('チー', myWaitingActions.canChi.map(c => ({ meld: c, tiles: c })), choice => sendActionCb({ type: 'chi', tiles: choice.tiles })) };
+            actionsToShow.chi = { type: 'チー', handler: () => { playSound('chi.wav'); showChoiceModal('チー', myWaitingActions.canChi.map(c => ({ meld: c, tiles: c })), choice => sendActionCb({ type: 'chi', tiles: choice.tiles })); } };
         }
 
         if (Object.keys(actionsToShow).length > 0) {
             actionsToShow.skip = { type: 'スキップ', handler: () => sendActionCb({ type: 'skip' }) };
         }
+        shouldShowContainer = true;
     }
+
+    if (isMyTurnAndRiichi && actionsToShow.ron) {
+        shouldShowContainer = true;
+    }
+    
+    if (shouldShowContainer) {
+        actionButtonsContainer.style.display = 'flex';
+        if (!wasActionContainerVisible) {
+            playSound('window.mp3');
+        }
+    } else {
+        actionButtonsContainer.style.display = 'none';
+    }
+    wasActionContainerVisible = shouldShowContainer;
     
     showActionButtons(actionsToShow);
 
@@ -452,9 +487,10 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
     }
 }
 
+
 function handleSpecialActions(gameState, myPlayerIndex, sendActionCb) {
     const pa = gameState.pendingSpecialAction;
-    const existingModal = document.getElementById('special-action-modal');
+    const existingModal = document.getElementById('nanawatashi-modal');
 
     if (!pa || pa.playerIndex !== myPlayerIndex) {
         if (existingModal) existingModal.remove();
@@ -468,74 +504,68 @@ function handleSpecialActions(gameState, myPlayerIndex, sendActionCb) {
     }
 }
 
-
-
 function showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb) {
+    const existingModal = document.getElementById('nanawatashi-modal');
+    if (existingModal) return;
+
     const modal = document.createElement('div');
-    modal.id = 'special-action-modal';
-    modal.className = 'modal-overlay';
-    
-    const content = document.createElement('div');
-    content.className = 'modal-content';
-    
+    modal.id = 'nanawatashi-modal';
+
     let selectedTile = null;
     let selectedTarget = null;
-
-    const header = document.createElement('h3');
-    header.textContent = '7わたし：渡す牌と相手を選択';
-    content.appendChild(header);
-
-    const handContainer = document.createElement('div');
-    handContainer.innerHTML = '<h4>渡す牌を選んでください</h4>';
-    const handTilesDiv = document.createElement('div');
-    handTilesDiv.style.display = 'flex';
-    handTilesDiv.style.flexWrap = 'wrap';
-    handTilesDiv.style.gap = '5px';
     
-    // Sort unique tiles from hand for consistent display
+    const relativePositions = {
+        [(myPlayerIndex + 1) % 4]: '下家',
+        [(myPlayerIndex + 2) % 4]: '対面',
+        [(myPlayerIndex + 3) % 4]: '上家',
+    };
+
+    modal.innerHTML = `
+        <h3>7わたし</h3>
+        <div class="content-wrapper">
+            <div class="hand-selection">
+                <h4>渡す牌を選択</h4>
+                <div class="hand-tiles-container"></div>
+            </div>
+            <div class="player-selection">
+                <h4>渡す相手を選択</h4>
+                <div class="player-buttons-container"></div>
+            </div>
+        </div>
+        <div class="action-area">
+            <button id="nanawatashi-confirm">決定</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const handTilesDiv = modal.querySelector('.hand-tiles-container');
     [...new Set(gameState.hands[myPlayerIndex])].sort(tileSort).forEach(tile => {
-        const img = createTileImage(tile, () => {
+        const img = createTileImage(tile, null, false);
+        img.onclick = () => {
             selectedTile = tile;
-            Array.from(handTilesDiv.children).forEach(c => c.style.border = '2px solid transparent');
-            img.style.border = '2px solid #ffdd00';
-            img.style.boxShadow = '0 0 8px #ffdd00';
-        });
-        img.style.cursor = 'pointer';
-        img.style.border = '2px solid transparent';
+            Array.from(handTilesDiv.children).forEach(c => c.classList.remove('selected'));
+            img.classList.add('selected');
+        };
         handTilesDiv.appendChild(img);
     });
-    handContainer.appendChild(handTilesDiv);
 
-    const playerContainer = document.createElement('div');
-    playerContainer.innerHTML = '<h4 style="margin-top: 15px;">渡す相手を選んでください</h4>';
-    const playerButtonsDiv = document.createElement('div');
-    playerButtonsDiv.style.display = 'flex';
-    playerButtonsDiv.style.gap = '10px';
-    playerButtonsDiv.style.marginTop = '5px';
-
-    for(let i=0; i<4; i++){
-        if (i === myPlayerIndex) continue;
-        if (gameState.isRiichi[i]) continue; // Cannot give to a player in Riichi
-
+    const playerButtonsDiv = modal.querySelector('.player-buttons-container');
+    for (let i = 0; i < 4; i++) {
+        if (i === myPlayerIndex || gameState.isRiichi[i]) continue;
+        
+        const playerName = gameState.playerNames[i] || `Player ${i + 1}`;
         const btn = document.createElement('button');
-        btn.textContent = `Player ${i+1}`;
+        const relation = relativePositions[i] || '';
+        btn.textContent = `${playerName} (${relation})`;
         btn.onclick = () => {
             selectedTarget = i;
-            Array.from(playerButtonsDiv.children).forEach(c => c.style.backgroundColor = '');
-            btn.style.backgroundColor = '#ffdd00';
+            Array.from(playerButtonsDiv.children).forEach(c => c.classList.remove('selected'));
+            btn.classList.add('selected');
         };
         playerButtonsDiv.appendChild(btn);
     }
-    playerContainer.appendChild(playerButtonsDiv);
 
-    const actionArea = document.createElement('div');
-    actionArea.style.marginTop = '20px';
-    actionArea.style.textAlign = 'center';
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.textContent = '決定';
-    confirmBtn.style.padding = '8px 16px';
-    confirmBtn.onclick = () => {
+    modal.querySelector('#nanawatashi-confirm').onclick = () => {
         if (selectedTile && selectedTarget !== null) {
             sendActionCb({
                 type: 'nanawatashi_select',
@@ -544,35 +574,61 @@ function showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb) {
             });
             modal.remove();
         } else {
-            alert('渡す牌と相手を選んでください。');
+            alert('渡す牌と相手の両方を選んでください。');
         }
     };
-
-    // No cancel button to prevent accidental game state lock. Player must choose or time out.
     
-    actionArea.appendChild(confirmBtn);
-
-    content.appendChild(handContainer);
-    content.appendChild(playerContainer);
-    content.appendChild(actionArea);
-    modal.appendChild(content);
-    document.body.appendChild(modal);
+    modal.style.display = 'block';
 }
 
+function animateScoreChange(displayIdx, scoreDiff, finalScore) {
+    const playerInfoDiv = playerInfoDivs[displayIdx];
+    
+    // スコア表示を先に更新
+    if (playerInfoDiv) {
+        playerInfoDiv.querySelector('.player-score').textContent = finalScore;
+    }
 
+    if (!playerInfoDiv || scoreDiff === 0) {
+        return;
+    }
 
-function displayRoundResult(result, myPlayerIndex) {
+    // アニメーション用の要素を作成
+    const changeEl = document.createElement('div');
+    changeEl.className = 'score-change';
+    const isPlus = scoreDiff > 0;
+    changeEl.classList.add(isPlus ? 'plus' : 'minus');
+    changeEl.textContent = (isPlus ? '+' : '') + scoreDiff;
+
+    // プレイヤー情報エリアに挿入
+    playerInfoDiv.appendChild(changeEl);
+
+    // アニメーション終了後に要素を削除
+    changeEl.addEventListener('animationend', () => {
+        changeEl.remove();
+    });
+}
+
+function displayRoundResult(result, myPlayerIndex, playerNames) {
+    const initialScores = playerInfoDivs.map(div => parseInt(div.querySelector('.player-score').textContent, 10));
+
     yakuResultContentEl.innerHTML = '';
     let contentHTML = '';
 
     if (result.type === 'win') {
         const { winnerIndex, fromIndex, winTile, isTsumo, hand, furo, yakuList, fu, han, scoreResult, doraIndicators, uraDoraIndicators, isRevolution, originalHan } = result;
-        const winnerName = winnerIndex === myPlayerIndex ? 'あなた' : 'P' + (winnerIndex + 1);
-        const fromPlayerName = fromIndex === winnerIndex ? '' : (fromIndex === myPlayerIndex ? 'あなた' : 'P' + (fromIndex + 1));
+        const winnerName = playerNames[winnerIndex];
+        const fromPlayerName = fromIndex === winnerIndex ? '' : playerNames[fromIndex];
         const titleText = isTsumo ? `${winnerName} のツモ和了` : `${winnerName} のロン和了 (放銃: ${fromPlayerName})`;
 
+        if (isTsumo) {
+            playSound('tsumo.wav');
+        } else {
+            playSound('ron.wav');
+        }
+
         contentHTML += `<h3>${titleText}</h3>`;
-        if (isRevolution) {
+        if (isRevolution && !scoreResult.name?.includes("役満")) {
             contentHTML += `<h4 style="color: #ff00ff; text-align: center;">革命適用！</h4>`;
         }
         contentHTML += '<div>';
@@ -627,7 +683,7 @@ function displayRoundResult(result, myPlayerIndex) {
         contentHTML += `<h3>${drawReasonMap[result.drawType] || '途中流局'}</h3>`;
         
         if (result.drawType === 'exhaustive') {
-            const tenpaiNames = result.tenpaiPlayers.map(pIdx => pIdx === myPlayerIndex ? 'あなた' : `P ${pIdx + 1}`);
+            const tenpaiNames = result.tenpaiPlayers.map(pIdx => playerNames[pIdx]);
             if (tenpaiNames.length > 0) {
                  contentHTML += `<p>聴牌者: ${tenpaiNames.join(', ')}</p>`;
             } else {
@@ -636,13 +692,52 @@ function displayRoundResult(result, myPlayerIndex) {
         }
     }
     
+    // --- Timer and Close Button Logic ---
+    let countdown = 10;
+    let intervalId = null;
+
+    const modalFooter = document.createElement('div');
+    modalFooter.className = 'modal-footer';
+
+    const timerEl = document.createElement('span');
+    timerEl.className = 'modal-timer';
+    
+    const closeButton = document.createElement('button');
+    closeButton.className = 'modal-close-btn';
+    closeButton.textContent = '閉じる';
+    
+    modalFooter.appendChild(timerEl);
+    modalFooter.appendChild(closeButton);
+
+    const closeModal = () => {
+        if (intervalId) clearInterval(intervalId);
+        resultModalEl.style.display = 'none';
+        
+        result.finalScores.forEach((score, playerIdx) => {
+            const displayIdx = (playerIdx - myPlayerIndex + 4) % 4;
+            const initialScore = initialScores[displayIdx];
+            const scoreDiff = score - initialScore;
+            
+            setTimeout(() => {
+                animateScoreChange(displayIdx, scoreDiff, score);
+            }, 100);
+        });
+    };
+
+    closeButton.onclick = closeModal;
+
     yakuResultContentEl.innerHTML = contentHTML;
+    yakuResultContentEl.appendChild(modalFooter);
     resultModalEl.style.display = 'flex';
     
-    result.finalScores.forEach((score, idx) => {
-        const displayIdx = (idx - myPlayerIndex + 4) % 4;
-        playerInfoDivs[displayIdx].querySelector('.player-score').textContent = score;
-    });
+    timerEl.textContent = `(自動で閉じるまで ${countdown} 秒)`;
+    intervalId = setInterval(() => {
+        countdown--;
+        timerEl.textContent = `(自動で閉じるまで ${countdown} 秒)`;
+        if (countdown <= 0) {
+            closeModal();
+        }
+    }, 1000);
 }
 
 
@@ -664,6 +759,7 @@ function createTileImage(tile, onClickFn = null, isSmall = false) {
 
 function hideActionButtons() {
     actionButtonsContainer.style.display = 'none';
+    wasActionContainerVisible = false; // Reset visibility state
     Object.values(actionButtons).forEach(btn => {
         btn.style.display = 'none';
         btn.onclick = null;
@@ -751,13 +847,13 @@ function showNanaWatashiNotification(event, myPlayerIndex) {
         document.body.appendChild(notificationEl);
     }
 
-    const { from, to, tile } = event;
+    const { to, fromName, toName, tile } = event;
     let message = '';
 
     if (to === myPlayerIndex) {
-        message = `P${from + 1} から牌を受け取りました`;
+        message = `${fromName} から牌を受け取りました`;
     } else {
-        message = `P${from + 1} が P${to + 1} に牌を渡しました`;
+        message = `${fromName} が ${toName} に牌を渡しました`;
     }
     
     notificationEl.innerHTML = ''; // Clear previous content
@@ -786,8 +882,20 @@ function showSpecialEvent(eventName) {
         'kyusute': '９捨て！',
         'nanawatashi': '７わたし！'
     };
+    const soundMap = {
+        'gotobashi': '5tobashi.wav',
+        'hachigiri': '8kiri.wav',
+        'kyusute': '9sute.wav',
+        'nanawatashi': '7watashi.wav'
+    };
     const text = textMap[eventName];
+    const soundFile = soundMap[eventName];
+
     if (!text || !specialEventNotificationEl) return;
+    
+    if (soundFile) {
+        playSound(soundFile);
+    }
 
     specialEventNotificationEl.textContent = text;
     specialEventNotificationEl.classList.remove('animate-special-event');
@@ -796,4 +904,26 @@ function showSpecialEvent(eventName) {
     void specialEventNotificationEl.offsetWidth; 
     
     specialEventNotificationEl.classList.add('animate-special-event');
+}
+
+// --- ★Event Listeners (ルールモーダル用) ---
+if (ruleButton && ruleModal) {
+    ruleButton.addEventListener('click', () => {
+        ruleModal.style.display = 'flex';
+    });
+}
+
+if (closeRuleModalBtn && ruleModal) {
+    closeRuleModalBtn.addEventListener('click', () => {
+        ruleModal.style.display = 'none';
+    });
+}
+
+// モーダルの外側をクリックしても閉じるようにする
+if (ruleModal) {
+    ruleModal.addEventListener('click', (event) => {
+        if (event.target === ruleModal) {
+            ruleModal.style.display = 'none';
+        }
+    });
 }

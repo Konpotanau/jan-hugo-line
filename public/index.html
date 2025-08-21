@@ -6,8 +6,18 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+
+  <div id="login-overlay" class="modal-overlay">
+    <div id="login-modal" class="modal-content">
+      <h3>プレイヤー名を入力してください</h3>
+      <input type="text" id="player-name-input" maxlength="10" placeholder="名前 (10文字まで)">
+      <button id="join-game-btn">CPUと対戦開始</button>
+    </div>
+  </div>
+  
+  <button id="rule-button">？</button>
+
   <h1>ジャン富豪ライン (4人打ち)</h1>
-  <button id="start-cpu-btn">CPUと対戦開始</button>
 
   <div id="mahjong-table">
     <div id="player-top" class="player-area">
@@ -87,7 +97,37 @@
   
   <div id="result-modal" class="modal-overlay" style="display:none;">
     <div id="yaku-result-content" class="modal-content">
+    </div>
+  </div>
+
+  <div id="rule-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+        <h3>ジャン富豪ライン - 特殊ルール</h3>
+        <div class="rule-content">
+            <h4>アガリ形式</h4>
+            <p>通常の「4面子1雀頭」以外に、牌の枚数が変動するため**「n面子1雀頭」**および**「n対子」**でアガることができます。</p>
+            
+            <h4>特殊な捨て牌</h4>
+            <ul>
+                <li><strong><img src="hai/p_ms5_1.gif" class="tile-small"> 5とばし:</strong> 萬子・筒子・索子の5を捨てると、次の人のツモ番を飛ばします。(鳴かれた場合は無効)</li>
+                <li><strong><img src="hai/p_ms8_1.gif" class="tile-small"> 8切り:</strong> 萬子・筒子・索子の8を捨てると、もう一度自分のツモ番になります。(鳴かれた場合は無効)</li>
+                <li><strong><img src="hai/p_ms9_1.gif" class="tile-small"> 9捨て:</strong> 萬子・筒子・索子の9を捨てると、追加でもう1枚手牌を捨てます。(鳴かれた場合、リーチ中の場合は無効)</li>
+                <li><strong><img src="hai/p_ms7_1.gif" class="tile-small"> 7わたし:</strong> 萬子・筒子・索子の7を捨てると、自分の手牌1枚を他のプレイヤーに渡せます。(鳴かれた場合、リーチ中の場合は無効。リーチしている相手には渡せません)</li>
+            </ul>
+
+            <h4>革命</h4>
+            <p>誰かがカンをすると**「革命」**状態になります。革命中はアガリの点数計算が反転します。</p>
+            <ul>
+                <li><strong>基本計算:</strong> 14翻 - (元の役の翻数)</li>
+                <li>元の翻数が役満(13翻)以上の場合は13翻として計算します。</li>
+                <li>ドラの翻数は、革命後の翻数にそのまま加算されます。</li>
+                <li>局の合計カン回数が偶数回になると、革命は終了し通常状態に戻ります。</li>
+            </ul>
+             <div class="modal-footer">
+                <button id="close-rule-modal" class="modal-close-btn">閉じる</button>
+            </div>
         </div>
+    </div>
   </div>
 
   <div id="special-event-notification"></div>

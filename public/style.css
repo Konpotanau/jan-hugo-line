@@ -6,7 +6,13 @@ body {
   background-color: #006442; /* Mahjong table green */
   color: #fff;
   overflow: hidden;
+  transition: background-color 0.5s ease-in-out; /* For revolution effect */
 }
+
+body.revolution-active {
+    background-color: #3b0064; /* 深い紫色 */
+}
+
 h1 {
     margin: 0 0 10px 0;
 }
@@ -219,6 +225,8 @@ h1 {
     white-space: nowrap; 
     border: 2px solid transparent; 
     transition: border-color 0.3s, color 0.3s;
+    position: relative; /* For score animation */
+    overflow: visible; /* For score animation */
 }
 .player-info.is-turn {
     border-color: #ffdd00;
@@ -333,7 +341,11 @@ h1 {
 .modal-content .yaku-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
 .modal-content .yaku-table td { padding: 4px; }
 .modal-content .total-score { display: block; text-align: right; font-size: 1.2em; margin-top: 10px; }
-.score-breakdown { text-align: right; font-size: 0.9em; color: #555; }
+.modal-content .score-breakdown { text-align: right; font-size: 0.9em; color: #555; }
+.modal-content .modal-footer { margin-top: 15px; display: flex; justify-content: space-between; align-items: center; }
+.modal-content .modal-timer { font-size: 0.9em; color: #777; }
+.modal-content .modal-close-btn { padding: 5px 15px; cursor: pointer; }
+
 
 #start-cpu-btn {
     position: fixed;
@@ -343,6 +355,25 @@ h1 {
     font-size: 1.2em;
     cursor: pointer;
     z-index: 2000;
+}
+
+#login-overlay {
+    display: flex; /* Initially visible */
+}
+#login-modal {
+    text-align: center;
+}
+#login-modal input {
+    display: block;
+    margin: 15px auto;
+    padding: 10px;
+    font-size: 1.1em;
+    width: 80%;
+}
+#login-modal button {
+    padding: 10px 25px;
+    font-size: 1.2em;
+    cursor: pointer;
 }
 
 #nanawatashi-notification {
@@ -445,4 +476,162 @@ h1 {
 
 .animate-special-event {
     animation: special-event-animation 2s ease-in-out forwards;
+}
+
+/* --- 7-watashi modal --- */
+#nanawatashi-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 35vw; /* 幅を小さく */
+    max-width: 500px; /* 最大幅も設定 */
+    background-color: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid #ffdd00;
+    z-index: 1001;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    display: none; /* Initially hidden by JS */
+}
+#nanawatashi-modal h3, #nanawatashi-modal h4 {
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+#nanawatashi-modal .content-wrapper {
+    display: flex;
+    flex-direction: column; /* 縦積みに変更 */
+    gap: 15px;
+}
+#nanawatashi-modal .hand-selection, #nanawatashi-modal .player-selection {
+    flex: 1;
+}
+#nanawatashi-modal .hand-tiles-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 150px; /* 高さを少し調整 */
+    overflow-y: auto;
+    padding: 5px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 5px;
+    justify-content: center;
+}
+#nanawatashi-modal .hand-tiles-container .tile {
+    width: 35px;
+    height: 50px;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+#nanawatashi-modal .hand-tiles-container .tile.selected {
+    border-color: #ffdd00;
+    box-shadow: 0 0 8px #ffdd00;
+}
+#nanawatashi-modal .player-buttons-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+#nanawatashi-modal .player-buttons-container button {
+    padding: 10px;
+    width: 100%;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    background-color: #f0f0f0;
+    color: #333;
+    cursor: pointer;
+    font-size: 1em;
+}
+#nanawatashi-modal .player-buttons-container button.selected {
+    background-color: #ffdd00;
+    border-color: #ffc400;
+}
+#nanawatashi-modal .action-area {
+    margin-top: 15px;
+    text-align: center;
+}
+#nanawatashi-modal .action-area button {
+    font-size: 1.1em;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+/* --- Score Change Animation --- */
+.score-change {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translateX(-50%);
+    font-size: 1.5em;
+    font-weight: bold;
+    text-shadow: 1px 1px 3px #000;
+    pointer-events: none;
+    animation: score-move-up 1.5s ease-out forwards;
+}
+
+.score-change.plus {
+    color: #8eff8e; /* Bright green */
+}
+
+.score-change.minus {
+    color: #ff8e8e; /* Bright red */
+}
+
+@keyframes score-move-up {
+    0% {
+        opacity: 1;
+        transform: translate(-50%, -50%) translateY(0);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) translateY(-40px);
+    }
+}
+
+/* --- Rule Modal & Button --- */
+#rule-button {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1001;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    border: 1px solid white;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+#rule-button:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+#rule-modal .modal-content {
+    max-height: 80vh;
+    overflow-y: auto;
+}
+.rule-content h4 {
+    margin-top: 15px;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 5px;
+}
+.rule-content ul {
+    list-style: none;
+    padding-left: 0;
+}
+.rule-content li {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+.rule-content li strong {
+    min-width: 120px;
+    display: inline-block;
 }

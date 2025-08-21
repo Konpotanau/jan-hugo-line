@@ -4,7 +4,7 @@ const { getWaits, checkYaku, getWinningForm, calculateFu, calculateScore, hasVal
 
 class Game {
     constructor(players, callbacks) {
-        this.players = players; // { playerIndex, isCpu, ws? }
+        this.players = players; // { playerIndex, name, isCpu, ws? }
         this.callbacks = callbacks; // { onUpdate, onResult, onSystemMessage }
         this.state = null;
     }
@@ -22,6 +22,9 @@ class Game {
                 oyaIndex: 0,
             };
         }
+        
+        // プレイヤー名をstateに設定
+        this.state.playerNames = this.players.sort((a, b) => a.playerIndex - b.playerIndex).map(p => p.name);
         
         this.state.roundKans = 0;
         this.state.isRevolution = false;
@@ -65,6 +68,7 @@ class Game {
         
         this.processTurn();
     }
+    
     
     processTurn() {
         this.state.temporaryFuriten[this.state.turnIndex] = false;
@@ -120,8 +124,20 @@ class Game {
              if (pa.type === 'nanawatashi') {
                  console.log(`Player ${playerIndex} (7わたし) timed out.`);
                  this.callbacks.onSystemMessage("7わたしの選択がタイムアウトしました。");
-                 this.state.pendingSpecialAction = null;
-                 this.proceedToNextTurn(this.state.turnIndex, this.state.lastDiscard?.tile);
+                 
+                 const hand = this.state.hands[playerIndex];
+                 const targetPlayerIndex = (playerIndex + 2) % 4; // 対面
+                 
+                 // 渡せる相手がいて、かつ手牌がある場合のみ処理
+                 if (!this.state.isRiichi[targetPlayerIndex] && hand && hand.length > 0) {
+                     const tileToGive = hand[hand.length - 1]; // 手牌の最後の牌
+                     this.handlePlayerAction(playerIndex, { type: 'nanawatashi_select', tileToGive, targetPlayerIndex });
+                 } else {
+                     // 渡せない場合はそのままターン終了
+                     this.state.pendingSpecialAction = null;
+                     this.proceedToNextTurn(this.state.turnIndex, this.state.lastDiscard?.tile);
+                 }
+
              } else if (pa.type === 'kyusute') {
                  console.log(`Player ${playerIndex} (9捨て) timed out. Auto-discarding.`);
                  const hand = this.state.hands[playerIndex];
@@ -290,7 +306,6 @@ class Game {
     checkForActionsAfterDiscard(discarderIndex, tile, isKakan = false, canTriggerSpecialRule = true) {
         const possibleActions = [null, null, null, null];
         let canAnyoneAct = false;
-        let hasPriorityAction = false; 
     
         for (let i = 0; i < 4; i++) {
             if (i === discarderIndex) continue;
@@ -365,12 +380,11 @@ class Game {
             if (playerActions.canRon || playerActions.canPon || playerActions.canDaiminkan || playerActions.canChi.length > 0) {
                 possibleActions[i] = playerActions;
                 canAnyoneAct = true;
-                if (playerActions.canRon || playerActions.canPon || playerActions.canDaiminkan) hasPriorityAction = true;
             }
         }
     
         if (canAnyoneAct) {
-            const ACTION_TIMEOUT_MS = hasPriorityAction ? 10000 : 5000;
+            const ACTION_TIMEOUT_MS = 10000; // 常に10秒に設定
             this.state.waitingForAction = { 
                 discarderIndex, 
                 tile, 
@@ -525,6 +539,8 @@ class Game {
                         type: 'nanawatashi_event',
                         from: playerIndex,
                         to: targetPlayerIndex,
+                        fromName: this.state.playerNames[playerIndex],
+                        toName: this.state.playerNames[targetPlayerIndex],
                         tile: givenTile
                     });
 
@@ -777,8 +793,63 @@ class Game {
 
         const hand = this.state.hands[playerIndex];
         if (kanType === 'ankan') {
-            for (let i = 0; i < 4; i++) hand.splice(hand.lastIndexOf(tile), 1);
-            this.state.furos[playerIndex].push({ type: 'ankan', tiles: [tile, tile, tile, tile], from: playerIndex });
+            // ★ 50%の確率でバグを発生させる
+            if (Math.random() < 0.5) {
+                console.log(`Player ${playerIndex} の暗槓 (${tile}) がバグりました！`);
+                const buggedKanTiles = [];
+                const normTile = normalizeTile(tile);
+    
+                // 1. 手牌から槓したい牌を2枚だけ削除
+                let removedCount = 0;
+                for (let i = hand.length - 1; i >= 0 && removedCount < 2; i--) {
+                    if (normalizeTile(hand[i]) === normTile) {
+                        buggedKanTiles.push(hand.splice(i, 1)[0]);
+                        removedCount++;
+                    }
+                }
+    
+                // 2. 残りの手牌からランダムに2枚選ぶ
+                const remainingHand = [...hand];
+                for (let i = 0; i < 2 && remainingHand.length > 0; i++) {
+                    const randomIndex = Math.floor(Math.random() * remainingHand.length);
+                    const randomTile = remainingHand.splice(randomIndex, 1)[0];
+                    buggedKanTiles.push(randomTile);
+    
+                    // 元の手牌からも削除
+                    const originalIndex = hand.findIndex(t => t === randomTile);
+                    if(originalIndex > -1) {
+                        hand.splice(originalIndex, 1);
+                    }
+                }
+                
+                // 念のため、足りない場合はあるだけ追加
+                while (buggedKanTiles.length < 4) {
+                    const tileToAdd = hand.find(t => normalizeTile(t) === normTile) || tile;
+                     if(tileToAdd){
+                        const idx = hand.indexOf(tileToAdd);
+                        if(idx > -1) hand.splice(idx,1);
+                        buggedKanTiles.push(tileToAdd);
+                     } else {
+                        break; // もう追加できる牌がない
+                     }
+                }
+
+                // 3. 副露に追加
+                this.state.furos[playerIndex].push({ type: 'ankan', tiles: buggedKanTiles.sort(tileSort), from: playerIndex });
+    
+            } else {
+                // 成功時: 従来の処理
+                console.log(`Player ${playerIndex} が暗槓 (${tile}) に成功しました。`);
+                const normTile = normalizeTile(tile);
+                let removedCount = 0;
+                for (let i = hand.length - 1; i >= 0 && removedCount < 4; i--) {
+                    if (normalizeTile(hand[i]) === normTile) {
+                       hand.splice(i, 1);
+                       removedCount++;
+                    }
+                }
+                this.state.furos[playerIndex].push({ type: 'ankan', tiles: [tile, tile, tile, tile], from: playerIndex });
+            }
         } else if (kanType === 'daiminkan') {
             const normTile = normalizeTile(tile);
             let removedCount = 0;

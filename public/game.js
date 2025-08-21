@@ -2,6 +2,8 @@
 let gameState = null;
 let myPlayerIndex = -1;
 let isGameStarted = false;
+// ★ AudioContextをグローバルで定義
+let audioContext = null;
 
 const getWebSocketURL = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -14,16 +16,49 @@ const getWebSocketURL = () => {
 
 const socket = new WebSocket(getWebSocketURL());
 
-const startWithCpuBtn = document.getElementById('start-cpu-btn');
+const loginOverlay = document.getElementById('login-overlay');
+const joinGameBtn = document.getElementById('join-game-btn');
+const playerNameInput = document.getElementById('player-name-input');
 
-startWithCpuBtn.onclick = () => {
-    socket.send(JSON.stringify({ type: 'start_with_cpu' }));
-    startWithCpuBtn.style.display = 'none';
+
+// ★ ユーザーの最初の操作でオーディオコンテキストをアンロックする関数 (修正版)
+function unlockAudioContext() {
+    if (audioContext && audioContext.state === 'running') {
+        return; 
+    }
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.error("AudioContext is not supported.", e);
+            return;
+        }
+    }
+    // resume()はユーザーのジェスチャーイベント内で呼び出す必要がある
+    if (audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+            console.log("AudioContext resumed successfully.");
+        }).catch(e => {
+            console.error("Failed to resume AudioContext:", e);
+        });
+    }
+}
+
+
+joinGameBtn.onclick = () => {
+    unlockAudioContext(); // ★対戦開始ボタンクリック時にオーディオを有効化
+    const name = playerNameInput.value.trim();
+    if (!name) {
+        alert('名前を入力してください。');
+        return;
+    }
+    socket.send(JSON.stringify({ type: 'join_game', name }));
+    loginOverlay.style.display = 'none';
 };
 
 socket.onopen = function(event) {
     console.log("サーバーに接続しました。");
-    infoEl.textContent = "サーバーに接続しました。他のプレイヤーを待っています...";
+    infoEl.textContent = "サーバーに接続しました。名前を入力してゲームを開始してください。";
 };
 
 socket.onmessage = function(event) {
@@ -43,7 +78,6 @@ socket.onmessage = function(event) {
             if (data.state && myPlayerIndex !== -1) {
                 if (!isGameStarted && data.state.gameStarted) {
                     isGameStarted = true;
-                    startWithCpuBtn.style.display = 'none';
                 }
                 gameState = data.state;
                 isGameStarted = gameState.gameStarted; // Update game status
@@ -52,7 +86,8 @@ socket.onmessage = function(event) {
             break;
         case 'round_result':
             isGameStarted = false;
-            displayRoundResult(data.result, myPlayerIndex);
+            // playerNamesをgameStateから取得して渡す
+            displayRoundResult(data.result, myPlayerIndex, gameState.playerNames);
             hideActionButtons(); // ラウンド結果表示時にアクションボタンを隠す
             break;
         case 'system_message':
@@ -62,13 +97,14 @@ socket.onmessage = function(event) {
             } else if (typeof msg === 'object' && msg.type === 'nanawatashi_event') {
                 showNanaWatashiNotification(msg, myPlayerIndex);
                 // Update the general info text for all players
-                infoEl.textContent = `P${msg.from + 1}がP${msg.to + 1}に牌を渡しました。`;
+                infoEl.textContent = `${msg.fromName}が${msg.toName}に牌を渡しました。`;
             } else {
                 infoEl.textContent = msg;
             }
             break;
         case 'error':
             alert(data.message);
+            loginOverlay.style.display = 'flex'; // エラー時は再度表示
             break;
     }
 };
@@ -76,7 +112,7 @@ socket.onmessage = function(event) {
 socket.onclose = function(event) {
     infoEl.textContent = "サーバーとの接続が切れました。ページをリロードしてください。";
     isGameStarted = false;
-    startWithCpuBtn.style.display = 'block';
+    loginOverlay.style.display = 'flex';
     myPlayerIndex = -1;
     gameState = null;
 };
@@ -92,6 +128,7 @@ function handlePlayerDiscard(tile) {
     const pa = gameState.pendingSpecialAction;
     // If in the 'kyusute' special action state, send the discard as a special action.
     if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute') {
+        playSound('dahai.mp3');
         sendAction({ type: 'kyusute_discard', tile: tile });
         return;
     }
@@ -103,6 +140,7 @@ function handlePlayerDiscard(tile) {
         console.log("リーチ後はツモった牌以外は捨てられません。");
         return;
     }
+    playSound('dahai.mp3');
     socket.send(JSON.stringify({ type: 'discard', tile: tile }));
 }
 
