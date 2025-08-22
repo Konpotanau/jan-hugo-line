@@ -197,10 +197,15 @@ function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayId
     const hand = gameState.hands[playerIdx];
     const isMyTurn = gameState.turnIndex === playerIdx && playerIdx === povPlayerIndex;
     const pa = gameState.pendingSpecialAction;
+
+    // kyusute中のみ、自分の手番として打牌を許可する
     const isMySpecialActionTurn = pa && pa.playerIndex === povPlayerIndex && pa.type === 'kyusute';
+    // nanawatashi中は打牌不可にする
+    const isNanawatashiTurn = pa && pa.playerIndex === povPlayerIndex && pa.type === 'nanawatashi';
 
     // ★ 観戦者でない場合のみ打牌可能
-    const canDiscard = !isSpectator && (isMyTurn || isMySpecialActionTurn);
+    const canDiscard = !isSpectator && (isMyTurn || isMySpecialActionTurn) && !isNanawatashiTurn;
+
 
     // ★ 自分の手牌 or 観戦者モードなら全ての手牌を表示
     if (displayIdx === 0 || isSpectator) {

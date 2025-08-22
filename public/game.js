@@ -293,6 +293,13 @@ function handlePlayerDiscard(tile) {
     if (!gameState || !isGameStarted) return;
     
     const pa = gameState.pendingSpecialAction;
+    
+    // 7わたし選択中は通常の打牌を送信しない
+    if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'nanawatashi') {
+        console.log("「7わたし」の選択を完了してください。");
+        return;
+    }
+    
     // If in the 'kyusute' special action state, send the discard as a special action.
     if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute') {
         playSound('dahai.mp3');
