@@ -2,6 +2,9 @@
 let gameState = null;
 let myPlayerIndex = -1;
 let isGameStarted = false;
+let isSpectator = false; // ★観戦者モードフラグ
+let spectatingPlayerIndex = 0; // ★現在観戦中のプレイヤーインデックス
+
 // ★ AudioContextはui.jsで定義されているものを共有して使用
 
 // ★ BGM管理オブジェクト
@@ -94,7 +97,7 @@ joinGameBtn.onclick = () => {
         return;
     }
     socket.send(JSON.stringify({ type: 'join_game', name }));
-    loginOverlay.style.display = 'none';
+    // loginOverlayはサーバーからの応答を待ってから非表示にする
 };
 
 socket.onopen = function(event) {
@@ -117,11 +120,30 @@ socket.onmessage = function(event) {
     switch (data.type) {
         case 'player_assignment':
             myPlayerIndex = data.playerIndex;
+            isSpectator = false;
             console.log(`あなたは Player ${myPlayerIndex} です。`);
+            loginOverlay.style.display = 'none';
+            document.getElementById('spectator-controls').style.display = 'none';
+            document.body.classList.remove('spectator-mode');
+            break;
+        // ★観戦者モードの割り当てを追加
+        case 'spectator_assignment':
+            myPlayerIndex = -1;
+            isSpectator = true;
+            spectatingPlayerIndex = 0;
+            console.log("観戦者モードで参加しました。");
+            loginOverlay.style.display = 'none';
+            document.getElementById('spectator-controls').style.display = 'block';
+            document.body.classList.add('spectator-mode');
+            setupSpectatorButtons();
             break;
         case 'update':
-            if (data.state && myPlayerIndex !== -1) {
-                // --- BGM & SE Control ---
+            // ★観戦者モードの場合、myPlayerIndexは-1なので、povPlayerIndexを使う
+            const povPlayerIndex = isSpectator ? spectatingPlayerIndex : myPlayerIndex;
+            if (data.state && (povPlayerIndex !== -1 || isSpectator)) {
+                document.body.classList.toggle('spectator-mode', isSpectator);
+
+                 // --- BGM & SE Control ---
                 const previousGameStarted = isGameStarted;
                 isGameStarted = data.state.gameStarted;
                 const isRevolution = data.state.isRevolution;
@@ -141,19 +163,22 @@ socket.onmessage = function(event) {
                     }
                 }
 
-                // 他家の打牌SE
+                // --- ここからSE再生ロジックを修正 ---
                 const newDiscard = data.state.lastDiscard;
                 if (newDiscard && 
                     (newDiscard.player !== lastDiscardInfo?.player || newDiscard.discardIndex !== lastDiscardInfo?.discardIndex)) {
-                    if (newDiscard.player !== myPlayerIndex) {
+                    // プレイヤーモード時は自分以外の打牌、観戦者モード時は全ての打牌で音を鳴らす
+                    if ((!isSpectator && newDiscard.player !== myPlayerIndex) || isSpectator) {
                         playSound('dahai.mp3');
                     }
                 }
                 lastDiscardInfo = newDiscard ? {...newDiscard} : null;
 
-                // ★ 他家の鳴きSE
+                // 鳴きSE
                 for (let i = 0; i < 4; i++) {
-                    if (i === myPlayerIndex) continue;
+                    // プレイヤーモードの時は自分以外の鳴きで音を鳴らす
+                    if (!isSpectator && i === myPlayerIndex) continue;
+
                     const newFuroCount = data.state.furos[i].length;
                     if (newFuroCount > lastFuroCounts[i]) {
                         const newFuro = data.state.furos[i][newFuroCount - 1];
@@ -163,10 +188,13 @@ socket.onmessage = function(event) {
                     }
                 }
                 lastFuroCounts = data.state.furos.map(f => f.length);
-                // --- End BGM & SE Control ---
+                // --- SE再生ロジックの修正ここまで ---
 
                 gameState = data.state;
-                renderAll(gameState, myPlayerIndex, handlePlayerDiscard, sendAction);
+                // ★ renderAllにisSpectatorフラグを追加
+                renderAll(gameState, povPlayerIndex, isSpectator, handlePlayerDiscard, sendAction);
+                 // ★観戦者ボタンのプレイヤー名を更新
+                if(isSpectator) updateSpectatorButtons(gameState.playerNames);
             }
             break;
         case 'round_result':
@@ -176,12 +204,17 @@ socket.onmessage = function(event) {
                 bgmManager.stop();
                 displayGameOver(data.result);
                 hideActionButtons();
+                // 観戦者モードをリセット
+                if (isSpectator) {
+                     document.getElementById('spectator-controls').style.display = 'none';
+                }
                 break;
             }
             isGameStarted = false;
             bgmManager.stop(); // 局終了時にBGM停止
             // playerNamesをgameStateから取得して渡す
-            displayRoundResult(data.result, myPlayerIndex, gameState.playerNames);
+            const povIdxForResult = isSpectator ? spectatingPlayerIndex : myPlayerIndex;
+            displayRoundResult(data.result, povIdxForResult, gameState.playerNames);
             hideActionButtons(); // ラウンド結果表示時にアクションボタンを隠す
             break;
         case 'system_message':
@@ -198,7 +231,11 @@ socket.onmessage = function(event) {
             break;
         case 'error':
             alert(data.message);
-            loginOverlay.style.display = 'flex'; // エラー時は再度表示
+            // エラー時は再度表示（観戦者モードも解除）
+            isSpectator = false;
+            document.body.classList.remove('spectator-mode');
+            document.getElementById('spectator-controls').style.display = 'none';
+            loginOverlay.style.display = 'flex'; 
             break;
     }
 };
@@ -217,7 +254,42 @@ socket.onerror = function(error) {
     infoEl.textContent = "サーバーとの接続に問題が発生しました。";
 };
 
+// ★観戦者ボタンをセットアップする関数
+function setupSpectatorButtons() {
+    const container = document.getElementById('spectator-view-buttons');
+    container.innerHTML = '';
+    for (let i = 0; i < 4; i++) {
+        const btn = document.createElement('button');
+        btn.dataset.player = i;
+        btn.textContent = `Player ${i + 1}`;
+        btn.onclick = () => {
+            spectatingPlayerIndex = i;
+            // gameStateがあれば再描画
+            if (gameState) {
+                renderAll(gameState, spectatingPlayerIndex, isSpectator, handlePlayerDiscard, sendAction);
+            }
+            // ボタンの選択状態を更新
+            document.querySelectorAll('#spectator-view-buttons button').forEach(b => {
+                b.classList.toggle('selected', parseInt(b.dataset.player, 10) === i);
+            });
+        };
+        container.appendChild(btn);
+    }
+    // 初期選択
+    container.querySelector('button[data-player="0"]').classList.add('selected');
+}
+
+// ★観戦者ボタンのプレイヤー名を更新する関数
+function updateSpectatorButtons(playerNames) {
+    if (!isSpectator || !playerNames) return;
+    document.querySelectorAll('#spectator-view-buttons button').forEach(btn => {
+        const playerIdx = parseInt(btn.dataset.player, 10);
+        btn.textContent = playerNames[playerIdx] || `Player ${playerIdx + 1}`;
+    });
+}
+
 function handlePlayerDiscard(tile) {
+    if (isSpectator) return; // ★観戦者は操作不可
     if (!gameState || !isGameStarted) return;
     
     const pa = gameState.pendingSpecialAction;
@@ -240,6 +312,7 @@ function handlePlayerDiscard(tile) {
 }
 
 function sendAction(action) {
+    if (isSpectator) return; // ★観戦者は操作不可
     if (!gameState || !isGameStarted) return;
     socket.send(JSON.stringify({ type: 'action', action: action }));
     hideActionButtons();

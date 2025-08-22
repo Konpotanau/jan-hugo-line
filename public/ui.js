@@ -63,21 +63,31 @@ function playSound(soundFile) {
     }
 }
 
-function renderAll(gameState, myPlayerIndex, sendDiscardCb, sendActionCb) {
-    if (!gameState || myPlayerIndex === -1) return;
+// ★ renderAllの引数を変更 (myPlayerIndex -> povPlayerIndex, isSpectatorを追加)
+function renderAll(gameState, povPlayerIndex, isSpectator, sendDiscardCb, sendActionCb) {
+    if (!gameState || povPlayerIndex === -1 && !isSpectator) return;
 
-    const playerPositions = [ myPlayerIndex, (myPlayerIndex + 1) % 4, (myPlayerIndex + 2) % 4, (myPlayerIndex + 3) % 4 ];
+    // ★ povPlayerIndex (Point of View) を基準に表示位置を決定
+    const playerPositions = [ povPlayerIndex, (povPlayerIndex + 1) % 4, (povPlayerIndex + 2) % 4, (povPlayerIndex + 3) % 4 ];
+    
     playerPositions.forEach((playerIdx, displayIdx) => {
-        renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscardCb, sendActionCb);
+        renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayIdx, sendDiscardCb, sendActionCb);
         renderDiscards(gameState, playerIdx, displayIdx);
         renderFuro(gameState, playerIdx, displayIdx);
-        renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx);
+        renderPlayerInfo(gameState, povPlayerIndex, isSpectator, playerIdx, displayIdx);
     });
     renderCommonInfo(gameState);
-    updateInfoText(gameState, myPlayerIndex);
-    handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscardCb);
-    handleSpecialActions(gameState, myPlayerIndex, sendActionCb);
-    renderTenpaiInfo(gameState, myPlayerIndex);
+    // ★ updateInfoText, handleActionButtons, handleSpecialActions にも isSpectator を渡す
+    updateInfoText(gameState, povPlayerIndex, isSpectator);
+    handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionCb, sendDiscardCb);
+    handleSpecialActions(gameState, povPlayerIndex, isSpectator, sendActionCb);
+    
+    // テンパイ情報は自分の手牌のみ（観戦者は見ない）
+    if (!isSpectator) {
+        renderTenpaiInfo(gameState, povPlayerIndex);
+    } else {
+        tenpaiInfoContainerEl.style.display = 'none';
+    }
     
     const timerInfo = gameState.turnTimer || gameState.waitingForAction?.timer;
     renderTimer(timerInfo);
@@ -179,26 +189,30 @@ function renderTenpaiInfo(gameState, myPlayerIndex) {
 }
 
 
-function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscardCb) {
+// ★ renderHandの引数を変更
+function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayIdx, sendDiscardCb) {
     const container = handContainers[displayIdx];
     container.innerHTML = "";
     
     const hand = gameState.hands[playerIdx];
-    const isMyTurn = gameState.turnIndex === playerIdx && playerIdx === myPlayerIndex;
+    const isMyTurn = gameState.turnIndex === playerIdx && playerIdx === povPlayerIndex;
     const pa = gameState.pendingSpecialAction;
-    const isMySpecialActionTurn = pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute';
+    const isMySpecialActionTurn = pa && pa.playerIndex === povPlayerIndex && pa.type === 'kyusute';
 
-    const canDiscard = isMyTurn || isMySpecialActionTurn;
+    // ★ 観戦者でない場合のみ打牌可能
+    const canDiscard = !isSpectator && (isMyTurn || isMySpecialActionTurn);
 
-    if (playerIdx === myPlayerIndex) {
+    // ★ 自分の手牌 or 観戦者モードなら全ての手牌を表示
+    if (displayIdx === 0 || isSpectator) {
         let tenpaiDiscardSet = new Set();
-        if (canDiscard && !gameState.isRiichi[myPlayerIndex]) {
+        // テンパイ候補のハイライトはプレイヤー時のみ
+        if (canDiscard && !gameState.isRiichi[povPlayerIndex]) {
             const uniqueTilesInHand = [...new Set(hand)];
             uniqueTilesInHand.forEach(tileToDiscard => {
                 const tempHand = [...hand];
                 if(tempHand.length === 0) return;
                 tempHand.splice(tempHand.lastIndexOf(tileToDiscard), 1);
-                if (getWaits(tempHand, gameState.furos[myPlayerIndex]).length > 0) {
+                if (getWaits(tempHand, gameState.furos[playerIdx]).length > 0) {
                     tenpaiDiscardSet.add(tileToDiscard);
                 }
             });
@@ -206,16 +220,15 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
 
         let handToDisplay = [...hand];
         let drawnTile = null;
-
-        if (isMyTurn && gameState.drawnTile) {
+        
+        // ツモ牌の分離表示は、そのプレイヤーのターンの時のみ
+        if (gameState.turnIndex === playerIdx && gameState.drawnTile) {
             const drawnTileIndex = handToDisplay.lastIndexOf(gameState.drawnTile);
             if (drawnTileIndex > -1) {
                 [drawnTile] = handToDisplay.splice(drawnTileIndex, 1);
             } else {
                  console.warn("ツモ牌が手牌に見つかりませんでした。表示を強制します。", { drawnTile: gameState.drawnTile, hand: [...handToDisplay] });
-                 // ツモ牌を手牌から見つけられなかった場合でも、ツモ牌を分離して表示する
                  drawnTile = gameState.drawnTile;
-                 // この場合 handToDisplay にツモ牌が残っている可能性があるので、手動で探して削除する
                  const stillExistsIndex = handToDisplay.findIndex(t => t === drawnTile);
                  if (stillExistsIndex > -1) {
                     handToDisplay.splice(stillExistsIndex, 1);
@@ -224,13 +237,14 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
         }
         
         handToDisplay.sort(tileSort).forEach(tile => {
-            const isMyRiichi = gameState.isRiichi[myPlayerIndex];
+            const isMyRiichi = gameState.isRiichi[povPlayerIndex];
             const isDeclaringRiichi = gameState.turnActions?.isDeclaringRiichi;
+            // ★ クリックハンドラは canDiscard (非観戦者かつ自分のターン) の場合のみ設定
             const canClick = canDiscard && (isDeclaringRiichi || !isMyRiichi);
             const clickHandler = canClick ? () => sendDiscardCb(tile) : null;
             const tileImg = createTileImage(tile, clickHandler);
             
-            if (tenpaiDiscardSet.has(tile)) {
+            if (!isSpectator && tenpaiDiscardSet.has(tile)) {
                 tileImg.classList.add('tile-tenpai-candidate');
             }
 
@@ -242,7 +256,7 @@ function renderHand(gameState, myPlayerIndex, playerIdx, displayIdx, sendDiscard
             const tileImg = createTileImage(drawnTile, clickHandler);
             tileImg.style.marginLeft = "15px";
 
-            if (tenpaiDiscardSet.has(drawnTile)) {
+            if (!isSpectator && tenpaiDiscardSet.has(drawnTile)) {
                 tileImg.classList.add('tile-tenpai-candidate');
             }
 
@@ -330,11 +344,12 @@ function renderFuro(gameState, playerIdx, displayIdx) {
     });
 }
 
-function renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx) {
+// ★ renderPlayerInfo の引数を変更
+function renderPlayerInfo(gameState, povPlayerIndex, isSpectator, playerIdx, displayIdx) {
     const div = playerInfoDivs[displayIdx];
     const jikazeChar = gameState.jikazes[playerIdx];
     const isOya = gameState.oyaIndex === playerIdx;
-    const handLength = gameState.hands[playerIdx]?.length || 0;
+    const handLength = Array.isArray(gameState.hands[playerIdx]) ? gameState.hands[playerIdx].length : 0;
     const playerName = gameState.playerNames[playerIdx] || `Player ${playerIdx + 1}`;
 
     const handCountSpan = div.querySelector('.player-hand-info');
@@ -342,18 +357,25 @@ function renderPlayerInfo(gameState, myPlayerIndex, playerIdx, displayIdx) {
         const isTurn = gameState.turnIndex === playerIdx;
         let isTenpaiShape = false;
         
-        // n面子1雀頭の聴牌形（または和了形）かどうかの判定 (n対子は考慮しない)
-        if (isTurn) { // ツモ後の状態 (3n+2枚)
-            if (handLength >= 2 && (handLength - 2) % 3 === 0) {
-                isTenpaiShape = true;
-            }
-        } else { // ツモ前の状態 (3n+1枚)
-            if (handLength >= 1 && (handLength - 1) % 3 === 0) {
-                isTenpaiShape = true;
+        // 手牌が公開されている場合のみ判定
+        if (handLength > 0 && Array.isArray(gameState.hands[playerIdx]) && gameState.hands[playerIdx][0] !== 'back') {
+            // n面子1雀頭の聴牌形（または和了形）かどうかの判定 (n対子は考慮しない)
+            if (isTurn) { // ツモ後の状態 (3n+2枚)
+                if (handLength >= 2 && (handLength - 2) % 3 === 0) {
+                    isTenpaiShape = true;
+                }
+            } else { // ツモ前の状態 (3n+1枚)
+                if (handLength >= 1 && (handLength - 1) % 3 === 0) {
+                    isTenpaiShape = true;
+                }
             }
         }
         
-        handCountSpan.textContent = `${playerName} (${jikazeChar}${isOya ? '家' : ''}) [${handLength}枚]`;
+        let namePrefix = '';
+        if (displayIdx === 0 && !isSpectator) {
+            namePrefix = 'あなた ';
+        }
+        handCountSpan.textContent = `${namePrefix}${playerName} (${jikazeChar}${isOya ? '家' : ''}) [${handLength}枚]`;
         handCountSpan.classList.toggle('agari-possible', isTenpaiShape);
     }
 
@@ -378,11 +400,21 @@ function renderCommonInfo(gameState) {
     }
 }
 
-function updateInfoText(gameState, myPlayerIndex) {
+// ★ updateInfoText の引数を変更
+function updateInfoText(gameState, povPlayerIndex, isSpectator) {
     if (!gameState || !gameState.gameStarted) return;
     
+    // ★ 観戦者用のテキスト
+    if (isSpectator) {
+        const turnPlayerName = gameState.playerNames[gameState.turnIndex] || `P${gameState.turnIndex + 1}`;
+        const spectatingPlayerName = gameState.playerNames[povPlayerIndex] || `P${povPlayerIndex + 1}`;
+        infoEl.textContent = `${turnPlayerName} のターンです。(観戦中: ${spectatingPlayerName}視点)`;
+        return;
+    }
+    
+    // --- 以下、プレイヤー用のロジック ---
     const pa = gameState.pendingSpecialAction;
-    if (pa && pa.playerIndex === myPlayerIndex) {
+    if (pa && pa.playerIndex === povPlayerIndex) {
         if (pa.type === 'kyusute') {
             infoEl.textContent = "「9捨て」！もう1枚捨てる牌を選んでください。";
         } else if (pa.type === 'nanawatashi') {
@@ -391,14 +423,14 @@ function updateInfoText(gameState, myPlayerIndex) {
         return;
     }
 
-    if (gameState.waitingForAction && gameState.waitingForAction.possibleActions[myPlayerIndex]) {
+    if (gameState.waitingForAction && gameState.waitingForAction.possibleActions[povPlayerIndex]) {
         infoEl.textContent = "アクションを選択してください。";
         return;
     }
-    if (gameState.turnIndex === myPlayerIndex) {
+    if (gameState.turnIndex === povPlayerIndex) {
         if(gameState.turnActions?.isDeclaringRiichi){
             infoEl.textContent = "捨てる牌を選んでください（リーチ）";
-        } else if (gameState.isRiichi[myPlayerIndex]) {
+        } else if (gameState.isRiichi[povPlayerIndex]) {
             infoEl.textContent = "あなたのターンです。（リーチ中）";
         } else if (gameState.drawnTile) { // If a tile is drawn, it's time to discard.
              infoEl.textContent = "あなたのターンです。捨てる牌を選んでください。";
@@ -411,26 +443,28 @@ function updateInfoText(gameState, myPlayerIndex) {
     }
 }
 
-function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscardCb) {
+// ★ handleActionButtons の引数を変更
+function handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionCb, sendDiscardCb) {
     hideActionButtons();
-    if (!gameState) return;
+    if (!gameState || isSpectator) return; // ★ 観戦者はボタンを表示しない
     
-    if (gameState.pendingSpecialAction && gameState.pendingSpecialAction.playerIndex === myPlayerIndex) {
+    // --- 以下、povPlayerIndex を myPlayerIndex の代わりに使う ---
+    if (gameState.pendingSpecialAction && gameState.pendingSpecialAction.playerIndex === povPlayerIndex) {
         actionButtonsContainer.style.display = 'none';
         return;
     }
 
-    const myTurnActions = gameState.turnIndex === myPlayerIndex && gameState.turnActions;
-    const myWaitingActions = gameState.waitingForAction && gameState.waitingForAction.possibleActions[myPlayerIndex];
-    const isMyTurnAndRiichi = gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex];
+    const myTurnActions = gameState.turnIndex === povPlayerIndex && gameState.turnActions;
+    const myWaitingActions = gameState.waitingForAction && gameState.waitingForAction.possibleActions[povPlayerIndex];
+    const isMyTurnAndRiichi = gameState.turnIndex === povPlayerIndex && gameState.isRiichi[povPlayerIndex];
     let actionsToShow = {};
 
     if (!myTurnActions && !myWaitingActions) {
          if (isMyTurnAndRiichi && gameState.drawnTile) {
-            const tempHand = [...gameState.hands[myPlayerIndex]];
-            const winForm = getWinningForm(tempHand, gameState.furos[myPlayerIndex]);
+            const tempHand = [...gameState.hands[povPlayerIndex]];
+            const winForm = getWinningForm(tempHand, gameState.furos[povPlayerIndex]);
              if (winForm) {
-                 const winContext = { hand: tempHand, furo: gameState.furos[myPlayerIndex], winTile: gameState.drawnTile, isTsumo: true, isRiichi: true, isIppatsu: gameState.isIppatsu[myPlayerIndex], isRinshan: !!gameState.lastKanContext, isChankan: false, dora: gameState.dora, uraDora: [], bakaze: gameState.bakaze, jikaze: gameState.jikazes[myPlayerIndex] };
+                 const winContext = { hand: tempHand, furo: gameState.furos[povPlayerIndex], winTile: gameState.drawnTile, isTsumo: true, isRiichi: true, isIppatsu: gameState.isIppatsu[povPlayerIndex], isRinshan: !!gameState.lastKanContext, isChankan: false, dora: gameState.dora, uraDora: [], bakaze: gameState.bakaze, jikaze: gameState.jikazes[povPlayerIndex] };
                  if (checkYaku(winContext).totalHan > 0) {
                      actionsToShow.ron = { type: 'ツモ', handler: () => { playSound('tsumo.wav'); sendActionCb({ type: 'tsumo' }); } };
                  }
@@ -496,7 +530,7 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
     if (isMyTurnAndRiichi && hasDrawnTile && !actionsToShow.ron && !actionsToShow.kan) {
         hideActionButtons();
         setTimeout(() => {
-            if (gameState.turnIndex === myPlayerIndex && gameState.isRiichi[myPlayerIndex] && gameState.drawnTile) {
+            if (gameState.turnIndex === povPlayerIndex && gameState.isRiichi[povPlayerIndex] && gameState.drawnTile) {
                 console.log(`Auto-discarding ${gameState.drawnTile} due to Riichi.`);
                 sendDiscardCb(gameState.drawnTile);
             }
@@ -505,17 +539,20 @@ function handleActionButtons(gameState, myPlayerIndex, sendActionCb, sendDiscard
 }
 
 
-function handleSpecialActions(gameState, myPlayerIndex, sendActionCb) {
+// ★ handleSpecialActions の引数を変更
+function handleSpecialActions(gameState, povPlayerIndex, isSpectator, sendActionCb) {
+    if (isSpectator) return; // ★観戦者は操作しない
+
     const pa = gameState.pendingSpecialAction;
     const existingModal = document.getElementById('nanawatashi-modal');
 
-    if (!pa || pa.playerIndex !== myPlayerIndex) {
+    if (!pa || pa.playerIndex !== povPlayerIndex) {
         if (existingModal) existingModal.remove();
         return;
     }
     
     if (pa.type === 'nanawatashi') {
-        if (!existingModal) showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb);
+        if (!existingModal) showNanaWatashiModal(gameState, povPlayerIndex, sendActionCb);
     } else {
         if (existingModal) existingModal.remove();
     }
@@ -626,7 +663,8 @@ function animateScoreChange(displayIdx, scoreDiff, finalScore) {
     });
 }
 
-function displayRoundResult(result, myPlayerIndex, playerNames) {
+// ★ displayRoundResult の引数を変更
+function displayRoundResult(result, povPlayerIndex, playerNames) {
     const initialScores = playerInfoDivs.map(div => parseInt(div.querySelector('.player-score').textContent, 10));
 
     yakuResultContentEl.innerHTML = '';
@@ -731,7 +769,8 @@ function displayRoundResult(result, myPlayerIndex, playerNames) {
         resultModalEl.style.display = 'none';
         
         result.finalScores.forEach((score, playerIdx) => {
-            const displayIdx = (playerIdx - myPlayerIndex + 4) % 4;
+            // ★ ここは povPlayerIndex を使う
+            const displayIdx = (playerIdx - povPlayerIndex + 4) % 4;
             const initialScore = initialScores[displayIdx];
             const scoreDiff = score - initialScore;
             
