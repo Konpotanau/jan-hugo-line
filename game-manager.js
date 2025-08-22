@@ -1101,7 +1101,7 @@ class Game {
     
     startNextRound(isRenchan) {
         // ★ ゲーム終了条件をチェック: 南4局で、親が連荘しなかった場合
-        if (this.state.bakaze === "東" && this.state.kyoku === 4 && !isRenchan) {
+        if (this.state.bakaze === "南" && this.state.kyoku === 4 && !isRenchan) {
             console.log("ゲーム終了です。最終結果を計算します。");
             const finalRanking = this.players
                 .map(p => ({
@@ -1123,9 +1123,9 @@ class Game {
     
             if (this.state.kyoku === 4) {
                  this.state.kyoku = 1;
-                 //if (this.state.bakaze === "東") {
-                 //    this.state.bakaze = "南";
-                 //}
+                 if (this.state.bakaze === "東") {
+                     this.state.bakaze = "南";
+                 }
                  // 南4局が終わったらゲーム終了なので、西入は考慮しない
             } else {
                  this.state.kyoku++;
