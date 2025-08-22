@@ -169,8 +169,15 @@ class Game {
         if (!this.state.gameStarted) return;
         if (this.state.turnIndex !== playerIndex) return;
 
-        // 9捨ての2枚目の打牌処理
         const pa = this.state.pendingSpecialAction;
+
+        // 7わたし中は通常の打牌を禁止
+        if (pa && pa.playerIndex === playerIndex && pa.type === 'nanawatashi') {
+            console.error(`(Server) Invalid operation: Player ${playerIndex} tried to discard (${tile}) during nanawatashi selection.`);
+            return;
+        }
+        
+        // 9捨ての2枚目の打牌処理
         if(pa && pa.type === 'kyusute' && pa.playerIndex === playerIndex) {
              this.handlePlayerAction(playerIndex, { type: 'kyusute_discard', tile: tile });
              return;
@@ -1094,7 +1101,7 @@ class Game {
     
     startNextRound(isRenchan) {
         // ★ ゲーム終了条件をチェック: 南4局で、親が連荘しなかった場合
-        if (this.state.bakaze === "南" && this.state.kyoku === 4 && !isRenchan) {
+        if (this.state.bakaze === "東" && this.state.kyoku === 4 && !isRenchan) {
             console.log("ゲーム終了です。最終結果を計算します。");
             const finalRanking = this.players
                 .map(p => ({
@@ -1116,9 +1123,9 @@ class Game {
     
             if (this.state.kyoku === 4) {
                  this.state.kyoku = 1;
-                 if (this.state.bakaze === "東") {
-                     this.state.bakaze = "南";
-                 }
+                 //if (this.state.bakaze === "東") {
+                 //    this.state.bakaze = "南";
+                 //}
                  // 南4局が終わったらゲーム終了なので、西入は考慮しない
             } else {
                  this.state.kyoku++;
