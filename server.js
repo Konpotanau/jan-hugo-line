@@ -27,11 +27,14 @@ let clients = [];
 let spectators = []; // ★観戦者リストを追加
 let game = null;
 let gameStartTimeout = null;
+let rolesAcknowledged = new Set();
+let gameStartFunction = null;
+
 // ★ Requirement ④: 特殊能力の管理用変数を追加
 let availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const cheatRoles = {
     1: { name: "鉄壁", description: "「7わたし」の対象になりません。相手のラッキーセブンをブロックします。" },
-    2: { name: "未来予知", description: "毎局1回だけ、次の自分のツモ牌を見ることができます。" },
+    2: { name: "未来予知", description: "「未来予知」ボタンで次の自分のツモ牌を見ることができます。" },
     3: { name: "連荘モード", description: "一度和了すると「連荘モード」に突入。モード中は良い配牌が来るまで配り直されます。" },
     4: { name: "風神", description: "東南西北、全ての風牌が自分の役牌になります。" },
     5: { name: "幻惑オーラ", description: "リーチをかけていない相手からのロンアガリを50%の確率で無効化します。" },
@@ -92,9 +95,6 @@ function addCpusAndStartGame() {
     if (game && game.state.gameStarted) return;
     clearTimeout(gameStartTimeout);
 
-    // ★ Requirement ④: ゲーム開始時にチートリストをリセット
-    availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-
     const neededCpus = 4 - clients.length;
     let cpuPlayers = [];
     for (let i = 0; i < neededCpus; i++) {
@@ -103,42 +103,10 @@ function addCpusAndStartGame() {
         console.log(`CPU Player ${cpuIndex} (${cpuPlayers[i].name}) を追加しました。`);
     }
 
-    // ★ Requirement ④ -> ③: 能力告知
-    const allPlayersWithCheats = clients.filter(c => c.name.startsWith("##"));
+    gameStartFunction = (gameLength = 'half') => {
+        clearTimeout(gameStartTimeout);
+        if (game && game.state.gameStarted) return;
 
-    if (allPlayersWithCheats.length > 0) {
-        allPlayersWithCheats.forEach(client => {
-            let roleToShow = null;
-            if (client.name.startsWith("##konpotas")) {
-                const playerName = client.name.replace(/^##konpotas\s*/, '');
-                roleToShow = {
-                    name: playerName,
-                    roleName: "創造神",
-                    description: "全ての特殊能力を併せ持つデバッグ用の全能者です。"
-                };
-            } else {
-                const match = client.name.match(/^##(\d+)\s*(.*)/);
-                if (match) {
-                    const cheatNumber = parseInt(match[1], 10);
-                    const playerName = match[2];
-                    const role = cheatRoles[cheatNumber];
-                    if (role) {
-                        roleToShow = { name: playerName, roleName: role.name, description: role.description };
-                    }
-                }
-            }
-            
-            if (roleToShow) {
-                client.ws.send(JSON.stringify({ type: 'show_roles', roles: [roleToShow] }));
-            }
-        });
-    }
-
-    const GAME_START_DELAY = allPlayersWithCheats.length > 0 ? 30000 : 1000;
-
-    broadcastSystemMessage(`${GAME_START_DELAY / 1000}秒後にゲームを開始します...`);
-
-    setTimeout(() => {
         const allPlayers = [
             ...clients.map(c => ({ playerIndex: c.playerIndex, name: c.name, isCpu: false, ws: c.ws })),
             ...cpuPlayers
@@ -150,8 +118,61 @@ function addCpusAndStartGame() {
             onSystemMessage: broadcastSystemMessage
         });
 
-        game.setupNewRound(true);
-    }, GAME_START_DELAY);
+        game.setupNewRound(true, gameLength);
+        gameStartFunction = null;
+    };
+
+    const promptForGameLength = () => {
+        const oyaClient = clients.find(c => c.playerIndex === 0);
+        if (oyaClient) { // 親が人間
+            const oyaName = oyaClient.name.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+            broadcastSystemMessage(`${oyaName} がゲーム形式を選択中です...`);
+            oyaClient.ws.send(JSON.stringify({ type: 'prompt_game_length' }));
+            gameStartTimeout = setTimeout(() => {
+                broadcastSystemMessage('選択がタイムアウトしたため、半荘戦で開始します。');
+                if (gameStartFunction) gameStartFunction('half');
+            }, 10000);
+        } else { // 親がCPU
+            broadcastSystemMessage('親がCPUのため、半荘戦で開始します。');
+            if (gameStartFunction) gameStartFunction('half');
+        }
+    };
+
+    const afterRolesAction = promptForGameLength;
+
+    availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const allPlayersWithCheats = clients.filter(c => c.name.startsWith("##"));
+
+    if (allPlayersWithCheats.length > 0) {
+        rolesAcknowledged.clear();
+        allPlayersWithCheats.forEach(client => {
+            let roleToShow = null;
+            if (client.name.startsWith("##konpotas")) {
+                const playerName = client.name.replace(/^##konpotas\s*/, '');
+                roleToShow = { name: playerName, roleName: "創造神", description: "全ての特殊能力を併せ持つデバッグ用の全能者です。" };
+            } else {
+                const match = client.name.match(/^##(\d+)\s*(.*)/);
+                if (match) {
+                    const cheatNumber = parseInt(match[1], 10);
+                    const playerName = match[2];
+                    const role = cheatRoles[cheatNumber];
+                    if (role) {
+                        roleToShow = { name: playerName, roleName: role.name, description: role.description };
+                    }
+                }
+            }
+            if (roleToShow) {
+                client.ws.send(JSON.stringify({ type: 'show_roles', roles: [roleToShow] }));
+            }
+        });
+        const GAME_START_DELAY = 30000;
+        broadcastSystemMessage(`${GAME_START_DELAY / 1000}秒後、または全員の準備完了後にゲームを開始します...`);
+        gameStartTimeout = setTimeout(afterRolesAction, GAME_START_DELAY);
+    } else {
+        const GAME_START_DELAY = 1000;
+        broadcastSystemMessage(`${GAME_START_DELAY / 1000}秒後にゲームを開始します...`);
+        gameStartTimeout = setTimeout(afterRolesAction, GAME_START_DELAY);
+    }
 }
 
 wss.on('connection', (ws) => {
@@ -253,6 +274,50 @@ function handleGameMessages(ws, message) {
         const data = JSON.parse(message);
         const client = clients.find(c => c.ws === ws);
         if (!client) return;
+
+        if (data.type === 'select_game_length') {
+            if (client.playerIndex === 0 && typeof gameStartFunction === 'function') {
+                const length = data.length === 'east' ? 'east' : 'half';
+                const lengthText = length === 'east' ? '東風戦' : '半荘戦';
+                const clientName = client.name.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+                broadcastSystemMessage(`${clientName} が ${lengthText} を選択しました。`);
+                gameStartFunction(length);
+            }
+            return;
+        }
+
+        if (data.type === 'roles_acknowledged') {
+            console.log(`Player ${client.playerIndex} (${client.name}) acknowledged roles.`);
+            rolesAcknowledged.add(client.playerIndex);
+
+            const specialPlayers = clients.filter(c => c.name.startsWith("##"));
+            const specialPlayerIndexes = new Set(specialPlayers.map(p => p.playerIndex));
+            const acknowledgedSpecialPlayers = [...rolesAcknowledged].filter(idx => specialPlayerIndexes.has(idx));
+
+            if (acknowledgedSpecialPlayers.length === specialPlayers.length && specialPlayers.length > 0) {
+                console.log("All special players are ready. Starting game now.");
+                if (gameStartFunction) {
+                    const afterRolesAction = () => {
+                         const oyaClient = clients.find(c => c.playerIndex === 0);
+                        if (oyaClient) { // 親が人間
+                            const oyaName = oyaClient.name.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+                            broadcastSystemMessage(`${oyaName} がゲーム形式を選択中です...`);
+                            oyaClient.ws.send(JSON.stringify({ type: 'prompt_game_length' }));
+                            gameStartTimeout = setTimeout(() => {
+                                broadcastSystemMessage('選択がタイムアウトしたため、半荘戦で開始します。');
+                                if (gameStartFunction) gameStartFunction('half');
+                            }, 10000);
+                        } else { // 親がCPU
+                            broadcastSystemMessage('親がCPUのため、半荘戦で開始します。');
+                            if (gameStartFunction) gameStartFunction('half');
+                        }
+                    };
+                    clearTimeout(gameStartTimeout);
+                    afterRolesAction();
+                }
+            }
+            return;
+        }
 
         if (!game || !game.state.gameStarted) {
             console.log(`ゲーム未開始時のアクションを無視: ${data.type}`);

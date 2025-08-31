@@ -29,6 +29,11 @@ const tenpaiInfoContainerEl = document.getElementById("tenpai-info-container");
 const revolutionStatusEl = document.getElementById("revolution-status");
 const specialEventNotificationEl = document.getElementById('special-event-notification');
 const peekInfoContainerEl = document.getElementById('peek-info-container'); // ★ Requirement ①: 要素取得
+const gameLengthModalEl = document.getElementById('game-length-modal');
+const gameLengthTimerEl = document.getElementById('game-length-timer');
+const selectEastBtn = document.getElementById('select-east-btn');
+const selectHalfBtn = document.getElementById('select-half-btn');
+
 const actionButtons = {
     riichi: document.getElementById("riichi"),
     pon: document.getElementById("pon"),
@@ -422,7 +427,13 @@ function renderCommonInfo(gameState) {
 
 // ★ updateInfoText の引数を変更
 function updateInfoText(gameState, povPlayerIndex, isSpectator) {
-    if (!gameState || !gameState.gameStarted) return;
+    if (!gameState || !gameState.gameStarted) {
+        if (gameState && gameState.gameLength) {
+             const lengthText = gameState.gameLength === 'east' ? '東風戦' : '半荘戦';
+             infoEl.textContent = `${lengthText} が選択されました。`;
+        }
+        return;
+    }
     
     // ★ 観戦者用のテキスト
     if (isSpectator) {
@@ -1030,6 +1041,36 @@ function displayGameOver(result) {
 
     modal.style.display = 'flex';
 }
+
+
+function showGameLengthModal(sendChoiceCb) {
+    if (!gameLengthModalEl || !gameLengthTimerEl || !selectEastBtn || !selectHalfBtn) return;
+
+    let countdown = 10;
+    gameLengthTimerEl.textContent = countdown;
+    gameLengthModalEl.style.display = 'flex';
+
+    const intervalId = setInterval(() => {
+        countdown--;
+        gameLengthTimerEl.textContent = countdown;
+        if (countdown <= 0) {
+            clearInterval(intervalId);
+            if (gameLengthModalEl.style.display === 'flex') {
+                gameLengthModalEl.style.display = 'none';
+            }
+        }
+    }, 1000);
+
+    const onChoice = (choice) => {
+        clearInterval(intervalId);
+        sendChoiceCb(choice);
+        gameLengthModalEl.style.display = 'none';
+    };
+
+    selectEastBtn.onclick = () => onChoice('east');
+    selectHalfBtn.onclick = () => onChoice('half');
+}
+
 
 // --- ★Event Listeners (ルールモーダル用) ---
 if (ruleButton && ruleModal) {

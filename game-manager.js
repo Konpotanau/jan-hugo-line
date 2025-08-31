@@ -41,7 +41,7 @@ class Game {
         this.state = null;
     }
 
-    setupNewRound(isFirstGame = false) {
+    setupNewRound(isFirstGame = false, gameLength = 'half') {
         console.log("新しいラウンドをセットアップします...");
         
         if (isFirstGame) {
@@ -53,6 +53,7 @@ class Game {
                 riichiSticks: 0,
                 oyaIndex: 0,
                 renchanMode: [false, false, false, false], // ##3 Renchan mode
+                gameLength: gameLength,
             };
         }
 
@@ -339,7 +340,8 @@ class Game {
         }
 
         const isKyusuteDiscard = tile.match(/^9[mps]$/);
-        if (this.state.isRiichi[playerIndex] && tile !== this.state.drawnTile && !isKyusuteDiscard) {
+        const isNanawatashiDiscard = tile.match(/^[r]?7[mps]$/);
+        if (this.state.isRiichi[playerIndex] && tile !== this.state.drawnTile && !isKyusuteDiscard && !isNanawatashiDiscard) {
             console.error(`(Server) 不正な操作: リーチ中のPlayer ${playerIndex}がツモ牌 (${this.state.drawnTile}) 以外の牌 (${tile}) を捨てようとしました。`);
             return;
         }
@@ -401,7 +403,9 @@ class Game {
         
         this.state.turnActions = null;
         
-        this.checkForActionsAfterDiscard(playerIndex, tile, false, true, !this.state.isRiichi[playerIndex]);
+        const canTriggerKyusute = !this.state.isRiichi[playerIndex] || (this.state.isRiichi[playerIndex] && isKyusuteDiscard);
+        const canTriggerNanawatashi = !this.state.isRiichi[playerIndex] || (this.state.isRiichi[playerIndex] && isNanawatashiDiscard);
+        this.checkForActionsAfterDiscard(playerIndex, tile, false, canTriggerKyusute, canTriggerNanawatashi);
     }
 
     checkForTurnActions(playerIndex) {
@@ -649,7 +653,7 @@ class Game {
                 return; 
             }
             if (canTriggerNanawatashi && isNanawatashi) {
-                this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: discarderIndex };
+                this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: discarderIndex, wasInRiichi: this.state.isRiichi[discarderIndex] };
                 this.state.turnIndex = discarderIndex;
                 if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
                 this.state.turnTimer = {
@@ -710,7 +714,7 @@ class Game {
                 this.handleWin(playerIndex, playerIndex, this.state.drawnTile, true, false);
                 return;
             }
-            if (action.type !== 'kyusute_discard') {
+            if (action.type !== 'kyusute_discard' && action.type !== 'nanawatashi_select') {
                 return;
             }
         }
@@ -793,6 +797,15 @@ class Game {
                         toName: this.state.playerNames[targetPlayerIndex],
                         tile: givenTile
                     });
+                    
+                    if (pa.wasInRiichi) {
+                        const isStillTenpai = getWaits(this.state.hands[playerIndex], this.state.furos[playerIndex]).length > 0;
+                        if (!isStillTenpai) {
+                            this.state.isRiichi[playerIndex] = false;
+                            console.log(`Player ${playerIndex} のリーチは7わたしにより解除されました。`);
+                            this.callbacks.onSystemMessage(`Player ${this.state.playerNames[playerIndex]}のリーチは解除されました。`);
+                        }
+                    }
 
                     this.state.pendingSpecialAction = null;
                     
@@ -1008,11 +1021,13 @@ class Game {
                 if (isHachigiri) this.callbacks.onSystemMessage({ type: 'special_event', event: 'hachigiri' });
 
                 const isKyusute = discardedTile.match(/^9[mps]$/);
-                const canTriggerNanaWatashi = !this.state.isRiichi[wa.discarderIndex];
                 const isNanawatashi = discardedTile.match(/^[r]?7[mps]$/);
                 const SPECIAL_ACTION_TIMEOUT_MS = 15000;
+                
+                const canTriggerKyusute = !this.state.isRiichi[wa.discarderIndex] || (this.state.isRiichi[wa.discarderIndex] && isKyusute);
+                const canTriggerNanaWatashi = !this.state.isRiichi[wa.discarderIndex] || (this.state.isRiichi[wa.discarderIndex] && isNanawatashi);
 
-                if (isKyusute) {
+                if (canTriggerKyusute && isKyusute) {
                     this.state.pendingSpecialAction = { type: 'kyusute', playerIndex: wa.discarderIndex, wasInRiichi: this.state.isRiichi[wa.discarderIndex] };
                     this.state.turnIndex = wa.discarderIndex;
                     if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
@@ -1030,7 +1045,7 @@ class Game {
                     return; 
                 }
                 if (canTriggerNanaWatashi && isNanawatashi) {
-                    this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: wa.discarderIndex };
+                    this.state.pendingSpecialAction = { type: 'nanawatashi', playerIndex: wa.discarderIndex, wasInRiichi: this.state.isRiichi[wa.discarderIndex] };
                     this.state.turnIndex = wa.discarderIndex;
                     if (this.state.turnTimer) clearTimeout(this.state.turnTimer.timeout);
                     this.state.turnTimer = {
@@ -1398,7 +1413,12 @@ class Game {
     }
     
     startNextRound(isRenchan) {
-        if (this.state.bakaze === "南" && this.state.kyoku === 4 && !isRenchan) {
+        const isEastOnly = this.state.gameLength === 'east';
+        const isLastRound = isEastOnly 
+            ? (this.state.bakaze === "東" && this.state.kyoku === 4)
+            : (this.state.bakaze === "南" && this.state.kyoku === 4);
+
+        if (isLastRound && !isRenchan) {
             console.log("ゲーム終了です。最終結果を計算します。");
             const finalRanking = this.players
                 .map(p => ({

@@ -142,6 +142,7 @@
       <div id="roles-content" class="rule-content"></div>
       <div class="modal-footer">
         <span class="modal-timer"></span>
+        <button id="close-roles-modal" class="modal-close-btn">閉じる</button>
       </div>
     </div>
   </div>
@@ -164,6 +165,17 @@
       </table>
       <div class="modal-footer">
         <button id="close-game-over-modal" class="modal-close-btn">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="game-length-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+      <h3>ゲーム形式を選択してください</h3>
+      <p>親番のため、ゲームの長さを選択できます。(残り <span id="game-length-timer">10</span> 秒)</p>
+      <div style="text-align: center; margin-top: 20px;">
+        <button id="select-east-btn">東風戦</button>
+        <button id="select-half-btn">半荘戦</button>
       </div>
     </div>
   </div>

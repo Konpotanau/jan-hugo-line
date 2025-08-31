@@ -137,6 +137,11 @@ socket.onmessage = function(event) {
             document.body.classList.add('spectator-mode');
             setupSpectatorButtons();
             break;
+        case 'prompt_game_length':
+            showGameLengthModal((choice) => {
+                socket.send(JSON.stringify({ type: 'select_game_length', length: choice }));
+            });
+            break;
         // ★ Requirement ④: 新しいイベントハンドラ
         case 'show_roles':
             displayRolesModal(data.roles);
@@ -257,7 +262,8 @@ function displayRolesModal(roles) {
     const modal = document.getElementById('roles-modal');
     const contentDiv = document.getElementById('roles-content');
     const timerEl = modal.querySelector('.modal-timer');
-    if (!modal || !contentDiv || !timerEl) return;
+    const closeBtn = document.getElementById('close-roles-modal');
+    if (!modal || !contentDiv || !timerEl || !closeBtn) return;
 
     let contentHTML = '<ul style="list-style-type: none; padding: 0;">';
     roles.forEach(role => {
@@ -268,9 +274,17 @@ function displayRolesModal(roles) {
 
     modal.style.display = 'flex';
 
+    let intervalId = null;
+
+    closeBtn.onclick = () => {
+        socket.send(JSON.stringify({ type: 'roles_acknowledged' }));
+        modal.style.display = 'none';
+        if (intervalId) clearInterval(intervalId);
+    };
+
     let countdown = 30;
     timerEl.textContent = `(ゲーム開始まで ${countdown} 秒)`;
-    const intervalId = setInterval(() => {
+    intervalId = setInterval(() => {
         countdown--;
         timerEl.textContent = `(ゲーム開始まで ${countdown} 秒)`;
         if (countdown <= 0) {
@@ -337,7 +351,8 @@ function handlePlayerDiscard(tile) {
     }
     
     const isKyusuteDiscard = tile.match(/^9[mps]$/);
-    if (gameState.isRiichi[myPlayerIndex] && tile !== gameState.drawnTile && !isKyusuteDiscard) {
+    const isNanawatashiDiscard = tile.match(/^[r]?7[mps]$/);
+    if (gameState.isRiichi[myPlayerIndex] && tile !== gameState.drawnTile && !isKyusuteDiscard && !isNanawatashiDiscard) {
         console.log("リーチ後はツモった牌以外は捨てられません。");
         return;
     }
