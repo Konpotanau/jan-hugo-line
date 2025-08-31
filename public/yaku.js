@@ -17,7 +17,6 @@ const isYaochu = (t) => { if (!t) return false; if (isJi(t)) return true; if (!i
 
 
 function getWinningForm(tiles, furo = []) {
-    const counts = tiles.reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
     const handLength = tiles.length;
 
     // --- 特殊形から判定 ---
@@ -55,13 +54,16 @@ function getWinningForm(tiles, furo = []) {
     }
     
     // --- n面子1雀頭 ---
-    const uniqueTiles = [...new Set(tiles)];
-    for (const jantoCandidate of uniqueTiles) {
-        if (counts[jantoCandidate] >= 2) {
+    const normCounts = tiles.map(normalizeTile).reduce((acc, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+    const uniqueNormTiles = Object.keys(normCounts);
+    for (const jantoNorm of uniqueNormTiles) {
+        if (normCounts[jantoNorm] >= 2) {
             const tempHand = [...tiles];
-            // 雀頭候補を2枚取り除く
-            tempHand.splice(tempHand.indexOf(jantoCandidate), 1);
-            tempHand.splice(tempHand.indexOf(jantoCandidate), 1);
+            // 雀頭候補を2枚取り除く (赤ドラと通常牌を正しく扱う)
+            const idx1 = tempHand.findIndex(t => normalizeTile(t) === jantoNorm);
+            if (idx1 > -1) tempHand.splice(idx1, 1);
+            const idx2 = tempHand.findIndex(t => normalizeTile(t) === jantoNorm);
+            if (idx2 > -1) tempHand.splice(idx2, 1);
             
             // 残りが3の倍数でなければならない
             if (tempHand.length % 3 !== 0) continue;
@@ -69,7 +71,8 @@ function getWinningForm(tiles, furo = []) {
             const melds = findMelds(tempHand.sort(tileSort));
             if (melds !== null) {
                 const totalMeldCount = melds.length + furo.length;
-                return { form: "n面子1雀頭", melds, janto: jantoCandidate, numMelds: totalMeldCount };
+                const janto = tiles.find(t => normalizeTile(t) === jantoNorm); // 表示用の牌
+                return { form: "n面子1雀頭", melds, janto: janto, numMelds: totalMeldCount };
             }
         }
     }
@@ -146,7 +149,7 @@ function findMelds(tiles) {
  * @returns {{yakuList: object[], totalHan: number}}
  */
 function checkYaku(winContext) {
-    const { hand, furo, winTile, isTsumo, isRiichi, isIppatsu, isRinshan, isChankan, dora, uraDora, bakaze, jikaze } = winContext; 
+    const { hand, furo, winTile, isTsumo, isRiichi, isIppatsu, isRinshan, isChankan, dora, uraDora, bakaze, jikaze, playerCheats } = winContext; 
     const isMenzen = furo.length === 0;
     let yaku = [];
     let yakumanHan = 0;
@@ -295,7 +298,12 @@ function checkYaku(winContext) {
         const tile = normalizeTile(m.tiles[0]);
         if (yakuhaiTiles.includes(tile)) yaku.push({ name: `役牌 (${tile})`, han: 1 });
         if (tile === bakaze) yaku.push({ name: `役牌 (場風)`, han: 1 });
-        if (tile === jikaze) yaku.push({ name: `役牌 (自風)`, han: 1 });
+        // ★ 修正点⑤: ##4/##0プレイヤーの役牌判定
+        if (playerCheats?.allWindsAreJikaze && ["東", "南", "西", "北"].includes(tile)) {
+            yaku.push({ name: `役牌 (自風)`, han: 1 });
+        } else if (tile === jikaze) {
+            yaku.push({ name: `役牌 (自風)`, han: 1 });
+        }
     });
 
     const numberTilesOnly = allTiles.filter(isNumberTile);
@@ -305,8 +313,6 @@ function checkYaku(winContext) {
         if (hasJi) yaku.push({ name: "混一色", han: isMenzen ? 3 : 2 });
         else if (numberTilesOnly.length === allTiles.length) yaku.push({ name: "清一色", han: isMenzen ? 6 : 5 });
     }
-    
-    // 混老頭は構成役満としてチェック済み
     
     if (winForm.form === "n面子1雀頭") {
         const isChanta = allMelds.every(m => m.tiles.some(isYaochu)) && winForm.janto && isYaochu(winForm.janto);
@@ -455,7 +461,13 @@ function calculateFu(winForm, yakuList, winContext) {
 
     if (winForm.janto) {
         const jantoNorm = normalizeTile(winForm.janto);
-        if (isYakuhai(jantoNorm, winContext.bakaze, winContext.jikaze)) fu += 2;
+        const isPlayer4 = winContext.playerCheats?.allWindsAreJikaze;
+        // ★ 修正点⑤: ##4/##0プレイヤーの符計算
+        if (isYakuhai(jantoNorm, winContext.bakaze, null) || (isPlayer4 && ["東", "南", "西", "北"].includes(jantoNorm))) {
+            fu += 2;
+        } else if (jantoNorm === winContext.jikaze) {
+            fu += 2;
+        }
         if (jantoNorm === winContext.bakaze && jantoNorm === winContext.jikaze) fu += 2; // 連風対子
         
         const winTileNorm = normalizeTile(winContext.winTile);

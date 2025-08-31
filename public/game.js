@@ -4,6 +4,7 @@ let myPlayerIndex = -1;
 let isGameStarted = false;
 let isSpectator = false; // ★観戦者モードフラグ
 let spectatingPlayerIndex = 0; // ★現在観戦中のプレイヤーインデックス
+let hasShownPeekedTile = false; // ★ Requirement ④: 覗き見牌を一度だけ表示するためのフラグ
 
 // ★ AudioContextはui.jsで定義されているものを共有して使用
 
@@ -16,11 +17,11 @@ const bgmManager = {
         if (this.bgmNormal) return; // Already initialized
         this.bgmNormal = new Audio('bgm/BGMNormal.mp3');
         this.bgmNormal.loop = true;
-        this.bgmNormal.volume = 0.5;
+        this.bgmNormal.volume = 0.25;
 
         this.bgmRiichi = new Audio('bgm/BGMrichi.mp3');
         this.bgmRiichi.loop = true;
-        this.bgmRiichi.volume = 0.5;
+        this.bgmRiichi.volume = 0.25;
     },
     play: function(type) {
         if (!audioContext || audioContext.state !== 'running') return;
@@ -126,7 +127,6 @@ socket.onmessage = function(event) {
             document.getElementById('spectator-controls').style.display = 'none';
             document.body.classList.remove('spectator-mode');
             break;
-        // ★観戦者モードの割り当てを追加
         case 'spectator_assignment':
             myPlayerIndex = -1;
             isSpectator = true;
@@ -137,8 +137,11 @@ socket.onmessage = function(event) {
             document.body.classList.add('spectator-mode');
             setupSpectatorButtons();
             break;
+        // ★ Requirement ④: 新しいイベントハンドラ
+        case 'show_roles':
+            displayRolesModal(data.roles);
+            break;
         case 'update':
-            // ★観戦者モードの場合、myPlayerIndexは-1なので、povPlayerIndexを使う
             const povPlayerIndex = isSpectator ? spectatingPlayerIndex : myPlayerIndex;
             if (data.state && (povPlayerIndex !== -1 || isSpectator)) {
                 document.body.classList.toggle('spectator-mode', isSpectator);
@@ -148,12 +151,11 @@ socket.onmessage = function(event) {
                 isGameStarted = data.state.gameStarted;
                 const isRevolution = data.state.isRevolution;
 
-                // 対局開始BGM
                 if (isGameStarted && !previousGameStarted) {
+                    hasShownPeekedTile = false;
                     bgmManager.play('normal');
                 }
                 
-                // ★ BGMロジック修正: 革命またはリーチでBGM変更
                 const someoneInRiichi = data.state.isRiichi.some(r => r);
                 if (isGameStarted) {
                     if (isRevolution || someoneInRiichi) {
@@ -163,20 +165,16 @@ socket.onmessage = function(event) {
                     }
                 }
 
-                // --- ここからSE再生ロジックを修正 ---
                 const newDiscard = data.state.lastDiscard;
                 if (newDiscard && 
                     (newDiscard.player !== lastDiscardInfo?.player || newDiscard.discardIndex !== lastDiscardInfo?.discardIndex)) {
-                    // プレイヤーモード時は自分以外の打牌、観戦者モード時は全ての打牌で音を鳴らす
                     if ((!isSpectator && newDiscard.player !== myPlayerIndex) || isSpectator) {
                         playSound('dahai.mp3');
                     }
                 }
                 lastDiscardInfo = newDiscard ? {...newDiscard} : null;
 
-                // 鳴きSE
                 for (let i = 0; i < 4; i++) {
-                    // プレイヤーモードの時は自分以外の鳴きで音を鳴らす
                     if (!isSpectator && i === myPlayerIndex) continue;
 
                     const newFuroCount = data.state.furos[i].length;
@@ -188,34 +186,34 @@ socket.onmessage = function(event) {
                     }
                 }
                 lastFuroCounts = data.state.furos.map(f => f.length);
-                // --- SE再生ロジックの修正ここまで ---
 
                 gameState = data.state;
-                // ★ renderAllにisSpectatorフラグを追加
+
+                if (!isSpectator && gameState.peekedTile && !hasShownPeekedTile) {
+                    infoEl.textContent = `（次のあなたのツモ牌は ${gameState.peekedTile} です）`;
+                    hasShownPeekedTile = true;
+                }
+
                 renderAll(gameState, povPlayerIndex, isSpectator, handlePlayerDiscard, sendAction);
-                 // ★観戦者ボタンのプレイヤー名を更新
                 if(isSpectator) updateSpectatorButtons(gameState.playerNames);
             }
             break;
         case 'round_result':
-             // ★ game_overイベントをここで処理
             if (data.result.type === 'game_over') {
                 isGameStarted = false;
                 bgmManager.stop();
                 displayGameOver(data.result);
                 hideActionButtons();
-                // 観戦者モードをリセット
                 if (isSpectator) {
                      document.getElementById('spectator-controls').style.display = 'none';
                 }
                 break;
             }
             isGameStarted = false;
-            bgmManager.stop(); // 局終了時にBGM停止
-            // playerNamesをgameStateから取得して渡す
+            bgmManager.stop();
             const povIdxForResult = isSpectator ? spectatingPlayerIndex : myPlayerIndex;
             displayRoundResult(data.result, povIdxForResult, gameState.playerNames);
-            hideActionButtons(); // ラウンド結果表示時にアクションボタンを隠す
+            hideActionButtons();
             break;
         case 'system_message':
             const msg = data.message;
@@ -223,15 +221,15 @@ socket.onmessage = function(event) {
                 showSpecialEvent(msg.event);
             } else if (typeof msg === 'object' && msg.type === 'nanawatashi_event') {
                 showNanaWatashiNotification(msg, myPlayerIndex);
-                // Update the general info text for all players
-                infoEl.textContent = `${msg.fromName}が${msg.toName}に牌を渡しました。`;
+                const displayNameFrom = msg.fromName.replace(/^##\d\s*/, '');
+                const displayNameTo = msg.toName.replace(/^##\d\s*/, '');
+                infoEl.textContent = `${displayNameFrom}が${displayNameTo}に牌を渡しました。`;
             } else {
                 infoEl.textContent = msg;
             }
             break;
         case 'error':
             alert(data.message);
-            // エラー時は再度表示（観戦者モードも解除）
             isSpectator = false;
             document.body.classList.remove('spectator-mode');
             document.getElementById('spectator-controls').style.display = 'none';
@@ -243,7 +241,7 @@ socket.onmessage = function(event) {
 socket.onclose = function(event) {
     infoEl.textContent = "サーバーとの接続が切れました。ページをリロードしてください。";
     isGameStarted = false;
-    bgmManager.stop(); // 切断時にBGM停止
+    bgmManager.stop();
     loginOverlay.style.display = 'flex';
     myPlayerIndex = -1;
     gameState = null;
@@ -254,7 +252,34 @@ socket.onerror = function(error) {
     infoEl.textContent = "サーバーとの接続に問題が発生しました。";
 };
 
-// ★観戦者ボタンをセットアップする関数
+// ★ Requirement ④: ロール表示モーダルを制御する関数
+function displayRolesModal(roles) {
+    const modal = document.getElementById('roles-modal');
+    const contentDiv = document.getElementById('roles-content');
+    const timerEl = modal.querySelector('.modal-timer');
+    if (!modal || !contentDiv || !timerEl) return;
+
+    let contentHTML = '<ul style="list-style-type: none; padding: 0;">';
+    roles.forEach(role => {
+        contentHTML += `<li style="margin-bottom: 1em;"><strong>${role.name}:</strong> <strong style="color: #d4af37;">${role.roleName}</strong><br>${role.description}</li>`;
+    });
+    contentHTML += '</ul>';
+    contentDiv.innerHTML = contentHTML;
+
+    modal.style.display = 'flex';
+
+    let countdown = 30;
+    timerEl.textContent = `(ゲーム開始まで ${countdown} 秒)`;
+    const intervalId = setInterval(() => {
+        countdown--;
+        timerEl.textContent = `(ゲーム開始まで ${countdown} 秒)`;
+        if (countdown <= 0) {
+            clearInterval(intervalId);
+            modal.style.display = 'none';
+        }
+    }, 1000);
+}
+
 function setupSpectatorButtons() {
     const container = document.getElementById('spectator-view-buttons');
     container.innerHTML = '';
@@ -264,22 +289,18 @@ function setupSpectatorButtons() {
         btn.textContent = `Player ${i + 1}`;
         btn.onclick = () => {
             spectatingPlayerIndex = i;
-            // gameStateがあれば再描画
             if (gameState) {
                 renderAll(gameState, spectatingPlayerIndex, isSpectator, handlePlayerDiscard, sendAction);
             }
-            // ボタンの選択状態を更新
             document.querySelectorAll('#spectator-view-buttons button').forEach(b => {
                 b.classList.toggle('selected', parseInt(b.dataset.player, 10) === i);
             });
         };
         container.appendChild(btn);
     }
-    // 初期選択
     container.querySelector('button[data-player="0"]').classList.add('selected');
 }
 
-// ★観戦者ボタンのプレイヤー名を更新する関数
 function updateSpectatorButtons(playerNames) {
     if (!isSpectator || !playerNames) return;
     document.querySelectorAll('#spectator-view-buttons button').forEach(btn => {
@@ -289,37 +310,43 @@ function updateSpectatorButtons(playerNames) {
 }
 
 function handlePlayerDiscard(tile) {
-    if (isSpectator) return; // ★観戦者は操作不可
+    if (isSpectator) return;
     if (!gameState || !isGameStarted) return;
     
+    if (gameState.waitingForAction) {
+        console.log("他プレイヤーのアクション待ちのため、打牌できません。");
+        return;
+    }
+
     const pa = gameState.pendingSpecialAction;
     
-    // 7わたし選択中は通常の打牌を送信しない
     if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'nanawatashi') {
         console.log("「7わたし」の選択を完了してください。");
         return;
     }
     
-    // If in the 'kyusute' special action state, send the discard as a special action.
     if (pa && pa.playerIndex === myPlayerIndex && pa.type === 'kyusute') {
         playSound('dahai.mp3');
         sendAction({ type: 'kyusute_discard', tile: tile });
         return;
     }
     
-    // Standard turn discard validation.
-    if (gameState.turnIndex !== myPlayerIndex) return;
-
-    if (gameState.isRiichi[myPlayerIndex] && tile !== gameState.drawnTile) {
+    if (gameState.turnIndex !== myPlayerIndex) {
+        console.log("自分のターンではありません。");
+        return;
+    }
+    
+    const isKyusuteDiscard = tile.match(/^9[mps]$/);
+    if (gameState.isRiichi[myPlayerIndex] && tile !== gameState.drawnTile && !isKyusuteDiscard) {
         console.log("リーチ後はツモった牌以外は捨てられません。");
         return;
     }
-    playSound('dahai.mp3'); // 自分の打牌音は即時再生
+    playSound('dahai.mp3');
     socket.send(JSON.stringify({ type: 'discard', tile: tile }));
 }
 
 function sendAction(action) {
-    if (isSpectator) return; // ★観戦者は操作不可
+    if (isSpectator) return;
     if (!gameState || !isGameStarted) return;
     socket.send(JSON.stringify({ type: 'action', action: action }));
     hideActionButtons();

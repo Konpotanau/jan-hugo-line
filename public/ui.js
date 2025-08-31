@@ -1,5 +1,4 @@
 // ui.js
-
 // --- ★ AudioContextを受け取るためのグローバル変数 ---
 let audioContext = null;
 
@@ -29,6 +28,7 @@ const actionButtonsContainer = document.getElementById("action-buttons");
 const tenpaiInfoContainerEl = document.getElementById("tenpai-info-container");
 const revolutionStatusEl = document.getElementById("revolution-status");
 const specialEventNotificationEl = document.getElementById('special-event-notification');
+const peekInfoContainerEl = document.getElementById('peek-info-container'); // ★ Requirement ①: 要素取得
 const actionButtons = {
     riichi: document.getElementById("riichi"),
     pon: document.getElementById("pon"),
@@ -37,6 +37,8 @@ const actionButtons = {
     kyukyu: document.getElementById("kyukyu"),
     ron: document.getElementById("ron"),
     skip: document.getElementById("skip"),
+    peek: document.getElementById("peek"),
+    revolution: document.getElementById("revolution"), // ★ Requirement ③: 革命ボタンを追加
 };
 // ★ルールモーダル関連の要素を取得
 const ruleButton = document.getElementById('rule-button');
@@ -85,8 +87,10 @@ function renderAll(gameState, povPlayerIndex, isSpectator, sendDiscardCb, sendAc
     // テンパイ情報は自分の手牌のみ（観戦者は見ない）
     if (!isSpectator) {
         renderTenpaiInfo(gameState, povPlayerIndex);
+        renderPeekInfo(gameState, povPlayerIndex); // ★ Requirement ①: 覗き見情報を描画
     } else {
         tenpaiInfoContainerEl.style.display = 'none';
+        if (peekInfoContainerEl) peekInfoContainerEl.style.display = 'none'; // ★ Requirement ①
     }
     
     const timerInfo = gameState.turnTimer || gameState.waitingForAction?.timer;
@@ -188,6 +192,22 @@ function renderTenpaiInfo(gameState, myPlayerIndex) {
     });
 }
 
+// ★ Requirement ①: 覗き見した牌を表示する関数を追加
+function renderPeekInfo(gameState, povPlayerIndex) {
+    if (!peekInfoContainerEl) return;
+    peekInfoContainerEl.innerHTML = '';
+
+    if (gameState.turnIndex === povPlayerIndex && gameState.peekedTile) {
+        peekInfoContainerEl.style.display = 'flex';
+        const textSpan = document.createElement('span');
+        textSpan.textContent = '次のツモ: ';
+        peekInfoContainerEl.appendChild(textSpan);
+        peekInfoContainerEl.appendChild(createTileImage(gameState.peekedTile, null, true));
+    } else {
+        peekInfoContainerEl.style.display = 'none';
+    }
+}
+
 
 // ★ renderHandの引数を変更
 function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayIdx, sendDiscardCb) {
@@ -199,19 +219,17 @@ function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayId
     const pa = gameState.pendingSpecialAction;
 
     // kyusute中のみ、自分の手番として打牌を許可する
-    const isMySpecialActionTurn = pa && pa.playerIndex === povPlayerIndex && pa.type === 'kyusute';
-    // nanawatashi中は打牌不可にする
-    const isNanawatashiTurn = pa && pa.playerIndex === povPlayerIndex && pa.type === 'nanawatashi';
-
+    const isMySpecialActionTurn = pa && pa.playerIndex === povPlayerIndex && (pa.type === 'kyusute' || pa.type === 'nanawatashi');
+    
     // ★ 観戦者でない場合のみ打牌可能
-    const canDiscard = !isSpectator && (isMyTurn || isMySpecialActionTurn) && !isNanawatashiTurn;
-
+    const canPerformAction = !isSpectator && (isMyTurn || isMySpecialActionTurn);
+    
 
     // ★ 自分の手牌 or 観戦者モードなら全ての手牌を表示
     if (displayIdx === 0 || isSpectator) {
         let tenpaiDiscardSet = new Set();
         // テンパイ候補のハイライトはプレイヤー時のみ
-        if (canDiscard && !gameState.isRiichi[povPlayerIndex]) {
+        if (canPerformAction && !gameState.isRiichi[povPlayerIndex]) {
             const uniqueTilesInHand = [...new Set(hand)];
             uniqueTilesInHand.forEach(tileToDiscard => {
                 const tempHand = [...hand];
@@ -242,11 +260,8 @@ function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayId
         }
         
         handToDisplay.sort(tileSort).forEach(tile => {
-            const isMyRiichi = gameState.isRiichi[povPlayerIndex];
-            const isDeclaringRiichi = gameState.turnActions?.isDeclaringRiichi;
-            // ★ クリックハンドラは canDiscard (非観戦者かつ自分のターン) の場合のみ設定
-            const canClick = canDiscard && (isDeclaringRiichi || !isMyRiichi);
-            const clickHandler = canClick ? () => sendDiscardCb(tile) : null;
+            // ★ 修正点: リーチ中の9捨ての後の牌選択を可能にする
+            const clickHandler = (playerIdx === povPlayerIndex && canPerformAction) ? () => sendDiscardCb(tile) : null;
             const tileImg = createTileImage(tile, clickHandler);
             
             if (!isSpectator && tenpaiDiscardSet.has(tile)) {
@@ -257,7 +272,7 @@ function renderHand(gameState, povPlayerIndex, isSpectator, playerIdx, displayId
         });
 
         if (drawnTile) {
-            const clickHandler = canDiscard ? () => sendDiscardCb(drawnTile) : null;
+            const clickHandler = (playerIdx === povPlayerIndex && canPerformAction) ? () => sendDiscardCb(drawnTile) : null;
             const tileImg = createTileImage(drawnTile, clickHandler);
             tileImg.style.marginLeft = "15px";
 
@@ -362,8 +377,8 @@ function renderPlayerInfo(gameState, povPlayerIndex, isSpectator, playerIdx, dis
         const isTurn = gameState.turnIndex === playerIdx;
         let isTenpaiShape = false;
         
-        // 手牌が公開されている場合のみ判定
-        if (handLength > 0 && Array.isArray(gameState.hands[playerIdx]) && gameState.hands[playerIdx][0] !== 'back') {
+        // ★修正点: 手牌が公開されているかのチェックを外し、枚数だけで判定するように変更
+        if (handLength > 0) {
             // n面子1雀頭の聴牌形（または和了形）かどうかの判定 (n対子は考慮しない)
             if (isTurn) { // ツモ後の状態 (3n+2枚)
                 if (handLength >= 2 && (handLength - 2) % 3 === 0) {
@@ -462,9 +477,10 @@ function handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionC
     const myTurnActions = gameState.turnIndex === povPlayerIndex && gameState.turnActions;
     const myWaitingActions = gameState.waitingForAction && gameState.waitingForAction.possibleActions[povPlayerIndex];
     const isMyTurnAndRiichi = gameState.turnIndex === povPlayerIndex && gameState.isRiichi[povPlayerIndex];
+    const isMyTurn = gameState.turnIndex === povPlayerIndex;
     let actionsToShow = {};
 
-    if (!myTurnActions && !myWaitingActions) {
+    if (!myTurnActions && !myWaitingActions && !isMyTurn) {
          if (isMyTurnAndRiichi && gameState.drawnTile) {
             const tempHand = [...gameState.hands[povPlayerIndex]];
             const winForm = getWinningForm(tempHand, gameState.furos[povPlayerIndex]);
@@ -482,10 +498,17 @@ function handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionC
     
     let shouldShowContainer = false;
 
+    // ★ 修正点①: ##2 プレイヤーのボタンテキストを変更
+    if (isMyTurn && gameState.canPeek) {
+        actionsToShow.peek = { type: '未来予知', handler: () => sendActionCb({ type: 'peek_tsumo' }) };
+    }
+
     if (myTurnActions) {
         if(myTurnActions.canTsumo) actionsToShow.ron = { type: 'ツモ', handler: () => { playSound('tsumo.wav'); sendActionCb({ type: 'tsumo' }); } };
         if(myTurnActions.canRiichi && !myTurnActions.isDeclaringRiichi) actionsToShow.riichi = { type: 'リーチ', handler: () => { playSound('richi.wav'); sendActionCb({ type: 'riichi' }); } };
         if(myTurnActions.canKyuKyu) actionsToShow.kyukyu = { type: '九種九牌', handler: () => sendActionCb({ type: 'kyukyu' }) };
+        // ★ 修正点③: ##9 プレイヤーの革命ボタン表示
+        if(myTurnActions.canRevolution) actionsToShow.revolution = { type: '革命', handler: () => sendActionCb({ type: 'revolution' }) };
 
         const kanChoices = [
             ...myTurnActions.canAnkan.map(t => ({ tile: t, kanType: 'ankan' })),
@@ -496,6 +519,7 @@ function handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionC
         } else if (kanChoices.length > 1) {
             actionsToShow.kan = { type: 'カン', handler: () => { playSound('kan.wav'); showChoiceModal('カン', kanChoices.map(c => ({ meld: [c.tile, c.tile, c.tile, c.tile], ...c })), choice => sendActionCb({ type: 'kan', ...choice })); } };
         }
+        
         shouldShowContainer = true;
     }
 
@@ -509,13 +533,17 @@ function handleActionButtons(gameState, povPlayerIndex, isSpectator, sendActionC
             actionsToShow.chi = { type: 'チー', handler: () => { playSound('chi.wav'); showChoiceModal('チー', myWaitingActions.canChi.map(c => ({ meld: c, tiles: c })), choice => sendActionCb({ type: 'chi', tiles: choice.tiles })); } };
         }
 
-        if (Object.keys(actionsToShow).length > 0) {
+        if (Object.keys(actionsToShow).length > 0 && !actionsToShow.peek && !actionsToShow.revolution) { // ★ スキップ不要なボタンを考慮
             actionsToShow.skip = { type: 'スキップ', handler: () => sendActionCb({ type: 'skip' }) };
         }
         shouldShowContainer = true;
     }
 
     if (isMyTurnAndRiichi && actionsToShow.ron) {
+        shouldShowContainer = true;
+    }
+
+    if (Object.keys(actionsToShow).length > 0) {
         shouldShowContainer = true;
     }
     
@@ -610,7 +638,11 @@ function showNanaWatashiModal(gameState, myPlayerIndex, sendActionCb) {
 
     const playerButtonsDiv = modal.querySelector('.player-buttons-container');
     for (let i = 0; i < 4; i++) {
-        if (i === myPlayerIndex || gameState.isRiichi[i]) continue;
+        // ★ Requirement ②, ⑤: ##1, ##0 プレイヤーは選択肢から除外 (isRiichiもチェック)
+        const targetPlayer = gameState.players.find(p => p.playerIndex === i);
+        if (i === myPlayerIndex || gameState.isRiichi[i] || (targetPlayer && (targetPlayer.name.startsWith("##1") || targetPlayer.name.startsWith("##0")))) {
+            continue;
+        }
         
         const playerName = gameState.playerNames[i] || `Player ${i + 1}`;
         const btn = document.createElement('button');

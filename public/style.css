@@ -167,6 +167,7 @@ h1 {
 
 #discard-2 { flex-flow: row-reverse wrap-reverse; }
 #discard-2 .tile { transform: rotate(180deg); }
+#discard-2 .riichi-discard { transform: rotate(90deg); }
 
 #discard-3 { flex-flow: column wrap-reverse; }
 #discard-3 .tile { transform: rotate(90deg); margin: -7.5px 0; }
@@ -252,6 +253,23 @@ h1 {
     background-color: rgba(0,0,0,0.5);
     padding: 5px 15px; border-radius: 5px;
     z-index: 99;
+}
+
+/* ★ Requirement ①: スタイル追加 */
+#peek-info-container {
+    position: fixed;
+    bottom: 160px;
+    left: 70%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.75);
+    padding: 5px 10px;
+    border-radius: 5px;
+    z-index: 98;
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-weight: bold;
+    border: 1px solid #ffdd00;
 }
 
 #action-buttons {

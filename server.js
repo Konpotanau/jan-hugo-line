@@ -27,6 +27,28 @@ let clients = [];
 let spectators = []; // ★観戦者リストを追加
 let game = null;
 let gameStartTimeout = null;
+// ★ Requirement ④: 特殊能力の管理用変数を追加
+let availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const cheatRoles = {
+    1: { name: "鉄壁", description: "「7わたし」の対象になりません。相手のラッキーセブンをブロックします。" },
+    2: { name: "未来予知", description: "毎局1回だけ、次の自分のツモ牌を見ることができます。" },
+    3: { name: "連荘モード", description: "一度和了すると「連荘モード」に突入。モード中は良い配牌が来るまで配り直されます。" },
+    4: { name: "風神", description: "東南西北、全ての風牌が自分の役牌になります。" },
+    5: { name: "幻惑オーラ", description: "リーチをかけていない相手からのロンアガリを50%の確率で無効化します。" },
+    6: { name: "ドラ蒐集", description: "配牌時に必ずドラが2枚以上含まれるようになります。" },
+    7: { name: "下剋上", description: "1翻または2翻の安い手で和了した際、役の翻数が自動的に3翻にパワーアップします。" },
+    8: { name: "富豪", description: "毎局開始時にボーナスとして2000点を受け取ります。" },
+    9: { name: "革命家", description: "自分のターンに1度だけ、ボタン1つで「革命」を起こしたり、終わらせたりできます。" },
+};
+
+// ★ Requirement ④: 配列シャッフル用のヘルパー関数
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+}
+
 
 function broadcast(type, payload) {
     const message = JSON.stringify({ type, ...payload });
@@ -70,6 +92,9 @@ function addCpusAndStartGame() {
     if (game && game.state.gameStarted) return;
     clearTimeout(gameStartTimeout);
 
+    // ★ Requirement ④: ゲーム開始時にチートリストをリセット
+    availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
     const neededCpus = 4 - clients.length;
     let cpuPlayers = [];
     for (let i = 0; i < neededCpus; i++) {
@@ -78,18 +103,55 @@ function addCpusAndStartGame() {
         console.log(`CPU Player ${cpuIndex} (${cpuPlayers[i].name}) を追加しました。`);
     }
 
-    const allPlayers = [
-        ...clients.map(c => ({ playerIndex: c.playerIndex, name: c.name, isCpu: false })),
-        ...cpuPlayers
-    ];
+    // ★ Requirement ④ -> ③: 能力告知
+    const allPlayersWithCheats = clients.filter(c => c.name.startsWith("##"));
 
-    game = new Game(allPlayers, {
-        onUpdate: broadcastGameState,
-        onResult: broadcastRoundResult,
-        onSystemMessage: broadcastSystemMessage
-    });
+    if (allPlayersWithCheats.length > 0) {
+        allPlayersWithCheats.forEach(client => {
+            let roleToShow = null;
+            if (client.name.startsWith("##konpotas")) {
+                const playerName = client.name.replace(/^##konpotas\s*/, '');
+                roleToShow = {
+                    name: playerName,
+                    roleName: "創造神",
+                    description: "全ての特殊能力を併せ持つデバッグ用の全能者です。"
+                };
+            } else {
+                const match = client.name.match(/^##(\d+)\s*(.*)/);
+                if (match) {
+                    const cheatNumber = parseInt(match[1], 10);
+                    const playerName = match[2];
+                    const role = cheatRoles[cheatNumber];
+                    if (role) {
+                        roleToShow = { name: playerName, roleName: role.name, description: role.description };
+                    }
+                }
+            }
+            
+            if (roleToShow) {
+                client.ws.send(JSON.stringify({ type: 'show_roles', roles: [roleToShow] }));
+            }
+        });
+    }
 
-    game.setupNewRound(true);
+    const GAME_START_DELAY = allPlayersWithCheats.length > 0 ? 30000 : 1000;
+
+    broadcastSystemMessage(`${GAME_START_DELAY / 1000}秒後にゲームを開始します...`);
+
+    setTimeout(() => {
+        const allPlayers = [
+            ...clients.map(c => ({ playerIndex: c.playerIndex, name: c.name, isCpu: false, ws: c.ws })),
+            ...cpuPlayers
+        ];
+
+        game = new Game(allPlayers, {
+            onUpdate: broadcastGameState,
+            onResult: broadcastRoundResult,
+            onSystemMessage: broadcastSystemMessage
+        });
+
+        game.setupNewRound(true);
+    }, GAME_START_DELAY);
 }
 
 wss.on('connection', (ws) => {
@@ -100,13 +162,13 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             
             if (data.type === 'join_game') {
-                const name = data.name || `Player ${clients.length + 1}`;
+                let clientName = data.name || `Player ${clients.length + 1}`;
 
                 // ★管理者（観戦者）判定
-                if (name === 'konpotanau') {
-                    const spectator = { ws, name };
+                if (clientName === 'konpotanau') {
+                    const spectator = { ws, name: clientName };
                     spectators.push(spectator);
-                    console.log(`観戦者 (${name}) が参加しました。`);
+                    console.log(`観戦者 (${clientName}) が参加しました。`);
                     ws.send(JSON.stringify({ type: 'spectator_assignment' }));
 
                     if (game && game.state.gameStarted) {
@@ -114,9 +176,9 @@ wss.on('connection', (ws) => {
                     }
 
                     ws.removeListener('message', messageHandler);
-                    ws.on('message', (m) => handleGameMessages(ws, m)); // メッセージハンドラは設定するが、操作は無視する
+                    ws.on('message', (m) => handleGameMessages(ws, m));
                     ws.on('close', () => handleDisconnect(ws));
-                    return; // プレイヤーとしては参加しないのでここで終了
+                    return;
                 }
 
                 if (game && game.state.gameStarted) {
@@ -131,24 +193,42 @@ wss.on('connection', (ws) => {
                     return;
                 }
                 
+                // ★ Requirement ④: 特殊能力のランダム割り当て
+                if (clientName.startsWith('##')) {
+                    if(clientName.startsWith('##konpotas')) {
+                        // そのまま維持
+                    } else if (availableCheats.length > 0) {
+                        shuffleArray(availableCheats);
+                        const cheatNumber = availableCheats.pop();
+                        const originalName = clientName.substring(2).trim();
+                        clientName = `##${cheatNumber} ${originalName}`;
+                        console.log(`Player ${originalName} was assigned cheat ##${cheatNumber}`);
+                    } else {
+                        console.log(`No more cheats available for ${clientName}`);
+                        clientName = clientName.substring(2).trim();
+                    }
+                }
+
+
                 const playerIndex = clients.length;
-                const client = { ws, playerIndex, name };
+                const client = { ws, playerIndex, name: clientName };
                 clients.push(client);
 
-                console.log(`Player ${playerIndex} (${name}) が参加しました。(現在 ${clients.length}人)`);
+                console.log(`Player ${playerIndex} (${clientName}) が参加しました。(現在 ${clients.length}人)`);
                 ws.send(JSON.stringify({ type: 'player_assignment', playerIndex }));
                 
-                ws.removeListener('message', messageHandler); // このハンドラは一度きり
+                ws.removeListener('message', messageHandler);
                 ws.on('message', (m) => handleGameMessages(ws, m));
                 ws.on('close', () => handleDisconnect(ws));
 
                 clearTimeout(gameStartTimeout);
 
                 if (clients.length >= 1) {
-                    broadcastSystemMessage(`${name} が入室しました。`);
+                    const displayName = clientName.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+                    broadcastSystemMessage(`${displayName} が入室しました。`);
                     if(clients.length < 4) {
                        gameStartTimeout = setTimeout(addCpusAndStartGame, 10000);
-                       broadcastSystemMessage(`10秒後にCPUを加えてゲームを開始します...`);
+                       broadcastSystemMessage(`10秒後にCPUを追加してゲームを開始します...`);
                     }
                 }
                 if (clients.length === 4) {
@@ -182,7 +262,11 @@ function handleGameMessages(ws, message) {
         if (data.type === 'discard') {
             game.handleDiscard(client.playerIndex, data.tile);
         } else if (data.type === 'action') {
-            game.handlePlayerAction(client.playerIndex, data.action);
+            if (data.action.type === 'peek_tsumo') {
+                game.handlePeekRequest(client.playerIndex);
+            } else {
+                game.handlePlayerAction(client.playerIndex, data.action);
+            }
         }
     } catch (e) {
         console.error('ゲームメッセージの処理に失敗しました:', e);
@@ -207,13 +291,20 @@ function handleDisconnect(ws) {
     
     if (game && game.state.gameStarted) {
         game = null;
-        broadcastSystemMessage(`${disconnectingPlayer.name}が切断したため、ゲームをリセットします。`);
-    } else if (clients.length > 0) { // ゲーム開始前で、まだプレイヤーが残っている場合
-        broadcastSystemMessage(`${disconnectingPlayer.name}が退出しました。`);
-    } else { // ゲーム開始前で、誰もいなくなった場合
-        game = null; 
+        const displayName = disconnectingPlayer.name.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+        broadcastSystemMessage(`${displayName}が切断したため、ゲームをリセットします。`);
+    } else if (clients.length > 0) {
+        const displayName = disconnectingPlayer.name.replace(/^##\d+\s*/, '').replace(/^##konpotas\s*/, '');
+        broadcastSystemMessage(`${displayName}が退出しました。`);
     }
     
+    // リセットロジック
+    if (clients.length === 0) {
+        game = null;
+        availableCheats = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        console.log("全プレイヤーが退出したため、ゲームをリセットしました。");
+    }
+
     clients.forEach((c, i) => {
         if(c.playerIndex !== i) {
             c.playerIndex = i;
@@ -224,7 +315,7 @@ function handleDisconnect(ws) {
     
     if (clients.length > 0 && !game) {
         gameStartTimeout = setTimeout(addCpusAndStartGame, 10000);
-        broadcastSystemMessage(`10秒後にCPUを加えてゲームを開始します...`);
+        broadcastSystemMessage(`10秒後にCPUを追加してゲームを開始します...`);
     }
 }
 
@@ -232,76 +323,97 @@ function handleDisconnect(ws) {
 function createPersonalizedState(playerIndex) {
     if (!game || !game.state) return {};
 
-    const serializableState = { ...game.state };
-
-    if (serializableState.waitingForAction) {
-        const { actionTimeout, ...rest } = serializableState.waitingForAction;
-        serializableState.waitingForAction = rest;
-    }
-    
-    if (serializableState.turnTimer) {
-        const { timeout, ...rest } = serializableState.turnTimer;
-        serializableState.turnTimer = rest;
-    }
-
-    const stateCopy = JSON.parse(JSON.stringify(serializableState));
-
-    for (let i = 0; i < 4; i++) {
-        if (i !== playerIndex && stateCopy.hands[i]) {
-            stateCopy.hands[i] = new Array(stateCopy.hands[i].length).fill('back');
+    const stateToSend = {};
+    for (const key in game.state) {
+        if (key === 'players') {
+            stateToSend.players = game.state.players.map(p => ({ 
+                playerIndex: p.playerIndex, 
+                name: p.name, 
+                isCpu: p.isCpu 
+            }));
+        } else if (key !== 'turnTimer' && key !== 'waitingForAction') {
+            stateToSend[key] = game.state[key];
         }
     }
 
-    if (stateCopy.waitingForAction) {
-        const myActions = stateCopy.waitingForAction.possibleActions[playerIndex];
-        stateCopy.waitingForAction.possibleActions = [];
+    if (game.state.waitingForAction) {
+        const { actionTimeout, ...rest } = game.state.waitingForAction;
+        stateToSend.waitingForAction = rest;
+    }
+
+    if (game.state.turnTimer) {
+        const { timeout, ...rest } = game.state.turnTimer;
+        stateToSend.turnTimer = rest;
+    }
+    
+    const maskedHands = stateToSend.hands.map((hand, i) => {
+        if (i !== playerIndex) {
+            return new Array(hand.length).fill('back');
+        }
+        return hand;
+    });
+    stateToSend.hands = maskedHands;
+
+    if (stateToSend.waitingForAction) {
+        const myActions = stateToSend.waitingForAction.possibleActions[playerIndex];
+        stateToSend.waitingForAction.possibleActions = [];
         if (myActions) {
-            stateCopy.waitingForAction.possibleActions[playerIndex] = myActions;
+            stateToSend.waitingForAction.possibleActions[playerIndex] = myActions;
         }
     }
-    if (stateCopy.turnActions && stateCopy.turnIndex !== playerIndex) {
-        stateCopy.turnActions = {};
+    if (stateToSend.turnActions && stateToSend.turnIndex !== playerIndex) {
+        stateToSend.turnActions = {};
+    }
+
+    // ★ 修正点②: ##2/##konpotas プレイヤーに覗き見情報を追加
+    const player = game.players.find(p => p.playerIndex === playerIndex);
+    if (player && (player.name.startsWith('##2') || player.name.startsWith('##konpotas'))) {
+        stateToSend.canPeek = !game.state.peekInfo.used[playerIndex] && game.state.turnIndex === playerIndex;
+        stateToSend.peekedTile = game.state.peekInfo.tile[playerIndex];
     }
     
-    delete stateCopy.yama;
-    delete stateCopy.deadWall;
-    delete stateCopy.uraDoraIndicators;
+    stateToSend.yamaLength = game.state.yama.length;
+    delete stateToSend.yama;
+    delete stateToSend.deadWall;
+    delete stateToSend.uraDoraIndicators;
+    delete stateToSend.peekInfo;
 
-    stateCopy.yamaLength = game.state.yama.length;
-
-    return stateCopy;
+    return stateToSend;
 }
 
 // ★観戦者用の完全なゲーム状態を返す関数を追加
 function createSpectatorState() {
     if (!game || !game.state) return {};
 
-    const serializableState = { ...game.state };
-
-    // タイムアウトオブジェクトはシリアライズできないので除外
-    if (serializableState.waitingForAction) {
-        const { actionTimeout, ...rest } = serializableState.waitingForAction;
-        serializableState.waitingForAction = rest;
+    const stateToSend = {};
+     for (const key in game.state) {
+        if (key === 'players') {
+            stateToSend.players = game.state.players.map(p => ({ 
+                playerIndex: p.playerIndex, 
+                name: p.name, 
+                isCpu: p.isCpu 
+            }));
+        } else if (key !== 'turnTimer' && key !== 'waitingForAction') {
+            stateToSend[key] = game.state[key];
+        }
     }
-    if (serializableState.turnTimer) {
-        const { timeout, ...rest } = serializableState.turnTimer;
-        serializableState.turnTimer = rest;
+
+    if (game.state.waitingForAction) {
+        const { actionTimeout, ...rest } = game.state.waitingForAction;
+        stateToSend.waitingForAction = rest;
+    }
+    if (game.state.turnTimer) {
+        const { timeout, ...rest } = game.state.turnTimer;
+        stateToSend.turnTimer = rest;
     }
 
-    const stateCopy = JSON.parse(JSON.stringify(serializableState));
-    
-    // 観戦者には全ての情報を見せるので、手牌のマスクは行わない
-    // waitingForActionやturnActionsもマスクしない
+    stateToSend.yamaLength = game.state.yama.length;
+    delete stateToSend.yama;
+    delete stateToSend.deadWall;
+    delete stateToSend.uraDoraIndicators;
+    delete stateToSend.peekInfo;
 
-    // サーバー内部でしか使わない情報は削除
-    delete stateCopy.yama;
-    delete stateCopy.deadWall;
-    //裏ドラは見せない（ゲーム終了時まで）
-    delete stateCopy.uraDoraIndicators;
-
-    stateCopy.yamaLength = game.state.yama.length;
-
-    return stateCopy;
+    return stateToSend;
 }
 
 
