@@ -1,12 +1,19 @@
 /* style.css */
+/* 修正点: html, body に高さを設定し、overflow: hidden を html にも適用 */
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
 body {
   font-family: sans-serif;
   text-align: center;
   padding: 10px;
   background-color: #006442; /* Mahjong table green */
   color: #fff;
-  overflow: hidden;
+  /* overflow: hidden; */ /* html要素に移動 */
   transition: background-color 0.5s ease-in-out; /* For revolution effect */
+  box-sizing: border-box; /* paddingを含めて高さを100%に収める */
 }
 
 body.revolution-active {
@@ -38,8 +45,9 @@ h1 {
 
 #mahjong-table {
   position: relative;
-  width: 95vw;
-  height: 95vh;
+  /* 修正点: vw/vh を vmin に変更 */
+  width: 95vmin;
+  height: 95vmin;
   max-width: 900px;
   max-height: 900px;
   margin: 0 auto;
