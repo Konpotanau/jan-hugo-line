@@ -14,6 +14,30 @@ body {
   /* overflow: hidden; */ /* html要素に移動 */
   transition: background-color 0.5s ease-in-out; /* For revolution effect */
   box-sizing: border-box; /* paddingを含めて高さを100%に収める */
+  
+  /* --- 修正点 ①: vminベースのサイズ定義 --- */
+  /* 基準 vmin (900pxの時 40px/57px) */
+  --tile-width-base: 4.5vmin;
+  --tile-height-base: 6.4vmin;
+  /* 最小サイズ */
+  --tile-width-min: 28px;
+  --tile-height-min: 40px;
+
+  /* 自分の手牌 (少し大きめ) */
+  --my-tile-width-base: 5vmin;
+  --my-tile-height-base: 7.1vmin;
+  --my-tile-width-min: 32px;
+  --my-tile-height-min: 45px;
+  
+  /* 小さい牌 (ドラなど) */
+  --small-tile-width-base: 2.5vmin;
+  --small-tile-height-base: 3.5vmin;
+  --small-tile-width-min: 18px;
+  --small-tile-height-min: 25px;
+
+  /* 河の牌サイズ */
+  --discard-tile-width: max(calc(var(--tile-width-min) * 0.9), calc(var(--tile-width-base) * 0.9));
+  --discard-tile-height: max(calc(var(--tile-height-min) * 0.9), calc(var(--tile-height-base) * 0.9));
 }
 
 body.revolution-active {
@@ -23,12 +47,13 @@ body.revolution-active {
 h1 {
     margin: 0 0 10px 0;
 }
+/* --- 修正点 ①: 牌サイズを vmin ベースに変更 --- */
 .tile {
   border: 1px solid #333;
   margin: 1px;
   background-color: white;
-  width: 40px;
-  height: 57px;
+  width: max(var(--tile-width-min), var(--tile-width-base));
+  height: max(var(--tile-height-min), var(--tile-height-base));
   object-fit: contain;
   border-radius: 3px;
   box-shadow: 1px 1px 3px rgba(0,0,0,0.5);
@@ -36,12 +61,19 @@ h1 {
 .tile-small {
   border: 1px solid #333;
   background-color: white;
-  width: 20px;
-  height: 28px;
+  width: max(var(--small-tile-width-min), var(--small-tile-width-base));
+  height: max(var(--small-tile-height-min), var(--small-tile-height-base));
   vertical-align: middle;
   border-radius: 2px;
   margin: 0 1px;
 }
+
+/* --- 修正点 ①: 自分の手牌サイズを上書き --- */
+#hand-0 .tile {
+  width: max(var(--my-tile-width-min), var(--my-tile-width-base));
+  height: max(var(--my-tile-height-min), var(--my-tile-height-base));
+}
+
 
 #mahjong-table {
   position: relative;
@@ -108,14 +140,19 @@ h1 {
 #player-bottom .tile:hover { transform: translateY(-8px); transition: transform 0.1s; }
 .hand-container.vertical {
     flex-direction: column;
-    width: 60px;
+    /* width: 60px; */ /* 修正点 ①: 固定幅を削除 (牌サイズで決まる) */
     font-size: 0;
 }
 .hand-container.vertical .tile {
     transform: rotate(90deg);
-    margin: -8px 0; 
+    /* margin: -8px 0; */ /* ← 固定値 */
+    /* --- 修正点 ①: 回転マージン調整 --- */
+    margin: calc( (max(var(--tile-width-min), var(--tile-width-base)) - max(var(--tile-height-min), var(--tile-height-base))) / 2 ) 0;
 }
-#player-left .hand-container.vertical .tile { transform: rotate(-90deg); }
+#player-left .hand-container.vertical .tile { 
+    transform: rotate(-90deg); 
+    /* マージンは .hand-container.vertical .tile で共通 */
+}
 
 .furo-container { display: flex; align-items: flex-end; }
 #player-bottom .furo-container { margin-left: 15px; }
@@ -125,9 +162,26 @@ h1 {
 
 
 .furo-set { display: flex; margin: 0 5px; padding: 2px; border-radius: 3px; align-items: flex-end; }
-.furo-set .tile, .furo-set .tile-small { width: 35px; height: 50px; }
-.furo-set .called-tile { transform: rotate(90deg); margin-bottom: -10px; margin-right: -10px; }
-.furo-set .kakan-tile { transform: rotate(90deg); margin-left: -25px; margin-bottom: -10px; }
+.furo-set .tile, .furo-set .tile-small { 
+  /* width: 35px; height: 50px; */ /* ← 固定値 */
+  /* --- 修正点 ①: 河の牌サイズに合わせる --- */
+  width: var(--discard-tile-width);
+  height: var(--discard-tile-height);
+}
+.furo-set .called-tile { 
+  transform: rotate(90deg); 
+  /* margin-bottom: -10px; margin-right: -10px; */ /* ← 固定値 */
+  /* --- 修正点 ①: マージン調整 (幅と高さの差の半分) --- */
+  margin-bottom: calc((var(--discard-tile-width) - var(--discard-tile-height)) * 0.5);
+  margin-right: calc((var(--discard-tile-width) - var(--discard-tile-height)) * 0.5);
+}
+.furo-set .kakan-tile { 
+  transform: rotate(90deg); 
+  /* margin-left: -25px; margin-bottom: -10px; */ /* ← 固定値 */
+  /* --- 修正点 ①: マージン調整 --- */
+  margin-left: calc(var(--discard-tile-width) * -0.7);
+  margin-bottom: calc((var(--discard-tile-width) - var(--discard-tile-height)) * 0.5);
+}
 
 
 #player-left .furo-set, #player-right .furo-set {
@@ -135,18 +189,41 @@ h1 {
   align-items: flex-start;
 }
 #player-left .furo-set .tile-small, #player-right .furo-set .tile-small { transform: none; }
-#player-left .furo-set .called-tile { transform: rotate(180deg); margin-left: -10px; margin-top: -10px;}
-#player-right .furo-set .called-tile { transform: rotate(0deg); margin-left: -10px; margin-bottom: -10px; }
+#player-left .furo-set .called-tile { 
+  transform: rotate(180deg); 
+  /* margin-left: -10px; margin-top: -10px; */ /* ← 固定値 */
+  /* --- 修正点 ①: マージン調整 --- */
+  margin-left: calc(var(--discard-tile-width) * -0.25);
+  margin-top: calc(var(--discard-tile-height) * -0.2);
+}
+#player-right .furo-set .called-tile { 
+  transform: rotate(0deg); 
+  /* margin-left: -10px; margin-bottom: -10px; */ /* ← 固定値 */
+  /* --- 修正点 ①: マージン調整 --- */
+  margin-left: calc(var(--discard-tile-width) * -0.25);
+  margin-bottom: calc(var(--discard-tile-height) * -0.2);
+}
 
-#player-top .furo-set .called-tile { transform: rotate(-90deg); margin-top: -10px; margin-left: -10px;}
+#player-top .furo-set .called-tile { 
+  transform: rotate(-90deg); 
+  /* margin-top: -10px; margin-left: -10px; */ /* ← 固定値 */
+  /* --- 修正点 ①: マージン調整 --- */
+  margin-top: calc((var(--discard-tile-width) - var(--discard-tile-height)) * 0.5);
+  margin-left: calc((var(--discard-tile-width) - var(--discard-tile-height)) * 0.5);
+}
 
 
 .discard-row {
   display: flex;
   flex-wrap: wrap;
   border: 1px solid rgba(0,0,0,0.2);
-  width: 270px; /* 6 tiles wide */
-  min-height: 190px;
+  /* width: 270px; */ /* 6 tiles wide */ /* ← 固定値 */
+  /* min-height: 190px; */ /* ← 固定値 */
+  
+  /* --- 修正点 ①: 河のサイズを vmin ベースに変更 --- */
+  width: calc(var(--discard-tile-width) * 6 + 10px); /* 6牌分 + padding */
+  min-height: calc(var(--discard-tile-height) * 3 + 10px); /* 3列分 + padding */
+
   margin: 0px auto;
   padding: 5px;
   background: rgba(0,0,0,0.1);
@@ -159,27 +236,64 @@ h1 {
 #player-right .discard-row { order: -1; }
 
 
-.discard-row .tile { width: 35px; height: 50px; margin: 0px; }
-.riichi-discard { transform: rotate(90deg); }
+.discard-row .tile { 
+  width: var(--discard-tile-width);
+  height: var(--discard-tile-height);
+  margin: 0px; 
+}
+.riichi-discard { 
+  width: var(--discard-tile-height);
+  height: var(--discard-tile-width);
+  transform: rotate(90deg) translateX(calc((var(--discard-tile-height) - var(--discard-tile-width)) * 0.5));
+}
 
 .latest-discard {
     border: 2px solid #ffdd00;
     box-shadow: 0 0 8px #ffdd00;
 }
 
-.discard-row.vertical { width: 230px; height: 250px;  margin: 10px 10px; flex-shrink: 0;column-gap: 13px;}
+.discard-row.vertical { 
+  /* width: 230px; height: 250px; */ 
+  /* --- 修正点 ①: 縦の河サイズを vmin ベースに変更 --- */
+  /* 縦の河は、高さが6牌分、幅が3牌分 */
+  width: calc(var(--discard-tile-width) * 3 + 10px + 13px * 2); /* 3列 + padding + column-gap */
+  height: calc(var(--discard-tile-height) * 6 + 10px); /* 6行 + padding */
+  margin: 10px 10px; 
+  flex-shrink: 0;
+  column-gap: 13px; /* 固定値だが、影響は少ないと判断 */
+}
 
 #discard-1 { flex-flow: column-reverse wrap; }
-#discard-1 .tile { transform: rotate(-90deg);  margin: -7.5px 0;} 
-#discard-1 .riichi-discard { transform: rotate(0deg); }
+#discard-1 .tile { 
+  transform: rotate(-90deg);  
+  /* --- 修正点 ①: 回転時のマージン調整 --- */
+  margin: calc( (var(--discard-tile-width) - var(--discard-tile-height)) / 2 ) 0;
+} 
+#discard-1 .riichi-discard { 
+  transform: rotate(0deg); 
+  width: var(--discard-tile-width);
+  height: var(--discard-tile-height);
+  margin: 0;
+}
 
 #discard-2 { flex-flow: row-reverse wrap-reverse; }
 #discard-2 .tile { transform: rotate(180deg); }
-#discard-2 .riichi-discard { transform: rotate(90deg); }
+#discard-2 .riichi-discard { 
+  transform: rotate(90deg) translateX(calc((var(--discard-tile-height) - var(--discard-tile-width)) * 0.5));
+}
 
 #discard-3 { flex-flow: column wrap-reverse; }
-#discard-3 .tile { transform: rotate(90deg); margin: -7.5px 0; }
-#discard-3 .riichi-discard { transform: rotate(0deg); }
+#discard-3 .tile { 
+  transform: rotate(90deg); 
+  /* --- 修正点 ①: 回転時のマージン調整 --- */
+  margin: calc( (var(--discard-tile-width) - var(--discard-tile-height)) / 2 ) 0;
+}
+#discard-3 .riichi-discard { 
+  transform: rotate(0deg); 
+  width: var(--discard-tile-width);
+  height: var(--discard-tile-height);
+  margin: 0;
+}
 
 #table-center {
   position: absolute;
@@ -254,7 +368,9 @@ h1 {
 
 #info {
     position: fixed;
-    bottom: 250px; /* Adjusted position */
+    /* bottom: 250px; */ /* Adjusted position */
+    bottom: 28vh; /* 修正点 ① */
+    min-height: 2.5em; /* 修正点 ① */
     left: 70%;
     transform: translateX(-50%);
     font-size: 1.2em; font-weight: bold;
@@ -266,7 +382,8 @@ h1 {
 /* ★ Requirement ①: スタイル追加 */
 #peek-info-container {
     position: fixed;
-    bottom: 160px;
+    /* bottom: 160px; */
+    bottom: 20vh; /* 修正点 ① */
     left: 70%;
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.75);
@@ -282,7 +399,8 @@ h1 {
 
 #action-buttons {
     position: fixed;
-    bottom: 100px; 
+    /* bottom: 100px; */ 
+    bottom: 12vh; /* 修正点 ① */
     left: 65%;
     transform: translateX(-50%);
     z-index: 100;
@@ -297,7 +415,8 @@ h1 {
 
 #action-buttons button { 
     font-size: 1.1em; 
-    padding: 8px 12px; 
+    /* padding: 8px 12px; */ /* ← 固定値 */
+    padding: 0.8vmin 1.2vmin; /* 修正点 ① */
     margin: 0; 
     cursor: pointer; 
     border-radius: 5px; 
@@ -308,7 +427,8 @@ h1 {
     flex-direction: column;
     align-items: center;
     gap: 5px;
-    min-width: 80px;
+    /* min-width: 80px; */ /* ← 固定値 */
+    min-width: 10vmin; /* 修正点 ① */
 }
 #action-buttons button:hover { background-color: #ddd; }
 
@@ -430,7 +550,8 @@ h1 {
 /* --- NEW STYLES --- */
 #tenpai-info-container {
     position: fixed;
-    bottom: 90px;
+    /* bottom: 90px; */
+    bottom: 3vh; /* 修正点 ① */
     left: 60%;
     transform: translateX(-50%);
     width: auto;
@@ -442,7 +563,8 @@ h1 {
     display: none; /* Initially hidden */
     flex-direction: column;
     gap: 5px;
-    max-height: 150px;
+    /* max-height: 150px; */
+    max-height: 8vh; /* 修正点 ① (action-buttonsに被らないよう低く) */
     overflow-y: auto;
     font-size: 0.9em;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -689,3 +811,4 @@ h1 {
 #ranking-table tbody tr:nth-child(3) {
     color: #cd7f32; /* Bronze */
 }
+
