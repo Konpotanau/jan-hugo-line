@@ -1,17 +1,18 @@
 /* style.css */
 /* 修正点: html, body に高さを設定し、overflow: hidden を html にも適用 */
 html, body {
-  height: 100%;
+  height: 100vh; /* 修正点 ②: 100% -> 100vh (モバイル対応) */
   margin: 0;
   overflow: hidden;
+  padding: 0; /* 修正点 ②: padding: 10px -> 0 */
+  box-sizing: border-box; /* 修正点 ②: box-sizing追加 */
 }
 body {
   font-family: sans-serif;
   text-align: center;
-  padding: 10px;
+  /* padding: 10px; */ /* 修正点 ②: 削除 */
   background-color: #006442; /* Mahjong table green */
   color: #fff;
-  /* overflow: hidden; */ /* html要素に移動 */
   transition: background-color 0.5s ease-in-out; /* For revolution effect */
   box-sizing: border-box; /* paddingを含めて高さを100%に収める */
   
@@ -24,8 +25,9 @@ body {
   --tile-height-min: 40px;
 
   /* 自分の手牌 (少し大きめ) */
-  --my-tile-width-base: 5vmin;
-  --my-tile-height-base: 7.1vmin;
+  /* 修正点 ②: わずかに縮小 */
+  --my-tile-width-base: 4.8vmin;
+  --my-tile-height-base: 6.8vmin;
   --my-tile-width-min: 32px;
   --my-tile-height-min: 45px;
   
@@ -76,45 +78,49 @@ h1 {
 
 
 #mahjong-table {
-  position: relative;
-  /* 修正点: vw/vh を vmin に変更 */
-  width: 95vmin;
-  height: 95vmin;
+  /* 修正点 ②: テーブルのサイズと配置を調整 */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 90vmin;
+  height: 90vmin;
   max-width: 900px;
   max-height: 900px;
-  margin: 0 auto;
+  margin: auto; /* 中央揃え */
 }
 
 .player-area { position: absolute; display: flex; align-items: center; }
 
 #player-bottom { 
-    bottom: -2%; 
+    bottom: 0; /* 修正点 ②: -2% -> 0 */
     left: 50%; 
     transform: translateX(-50%); 
-    width: 70%; 
+    width: 85%; /* 修正点 ②: 70% -> 85% */
     flex-direction: column;
 }
 #player-top { 
-    top: 1%;
+    top: 0; /* 修正点 ②: 1% -> 0 */
     left: 50%; 
     transform: translateX(-50%); 
-    width: 70%;
+    width: 85%; /* 修正点 ②: 70% -> 85% */
     flex-direction: column-reverse;
 }
 #player-left { 
-    left: -8%; 
+    left: -5vmin; /* 修正点 ②: -8% -> -5vmin */
     top: 50%; 
     transform: translateY(-50%); 
     height: 70%; 
-    width: 50%; 
+    width: 40%; /* 修正点 ②: 50% -> 40% */
     flex-direction: row-reverse;
 }
 #player-right { 
-    right: -8%; 
+    right: -5vmin; /* 修正点 ②: -8% -> -5vmin */
     top: 50%; 
     transform: translateY(-50%); 
     height: 70%; 
-    width: 50%;
+    width: 40%; /* 修正点 ②: 50% -> 40% */
     flex-direction: row;
 }
 
@@ -217,11 +223,11 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   border: 1px solid rgba(0,0,0,0.2);
-  /* width: 270px; */ /* 6 tiles wide */ /* ← 固定値 */
-  /* min-height: 190px; */ /* ← 固定値 */
-  
-  /* --- 修正点 ①: 河のサイズを vmin ベースに変更 --- */
-  width: calc(var(--discard-tile-width) * 6 + 10px); /* 6牌分 + padding */
+  /* 修正点 ②: 親要素に幅を合わせつつ、最大幅を牌6個分に制限 */
+  width: auto; 
+  justify-content: center;
+  max-width: calc(var(--discard-tile-width) * 6 + 12px); /* 6牌分 + padding 5px*2 + margin 1px*2 */
+
   min-height: calc(var(--discard-tile-height) * 3 + 10px); /* 3列分 + padding */
 
   margin: 0px auto;
@@ -253,11 +259,12 @@ h1 {
 }
 
 .discard-row.vertical { 
-  /* width: 230px; height: 250px; */ 
-  /* --- 修正点 ①: 縦の河サイズを vmin ベースに変更 --- */
-  /* 縦の河は、高さが6牌分、幅が3牌分 */
-  width: calc(var(--discard-tile-width) * 3 + 10px + 13px * 2); /* 3列 + padding + column-gap */
-  height: calc(var(--discard-tile-height) * 6 + 10px); /* 6行 + padding */
+  /* 修正点 ②: 縦の河も同様に調整 */
+  width: auto;
+  max-width: calc(var(--discard-tile-width) * 3 + 12px + 13px * 2); /* 3列 + padding + column-gap */
+  height: auto;
+  max-height: calc(var(--discard-tile-height) * 6 + 12px); /* 6行 + padding */
+
   margin: 10px 10px; 
   flex-shrink: 0;
   column-gap: 13px; /* 固定値だが、影響は少ないと判断 */
@@ -368,10 +375,10 @@ h1 {
 
 #info {
     position: fixed;
-    /* bottom: 250px; */ /* Adjusted position */
-    bottom: 28vh; /* 修正点 ① */
-    min-height: 2.5em; /* 修正点 ① */
-    left: 70%;
+    /* 修正点 ②: vh -> vmin, left調整 */
+    bottom: 30vmin;
+    min-height: 2.5em;
+    left: 50%;
     transform: translateX(-50%);
     font-size: 1.2em; font-weight: bold;
     background-color: rgba(0,0,0,0.5);
@@ -382,9 +389,9 @@ h1 {
 /* ★ Requirement ①: スタイル追加 */
 #peek-info-container {
     position: fixed;
-    /* bottom: 160px; */
-    bottom: 20vh; /* 修正点 ① */
-    left: 70%;
+    /* 修正点 ②: vh -> vmin, left調整 */
+    bottom: 22vmin;
+    left: 50%;
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.75);
     padding: 5px 10px;
@@ -399,10 +406,12 @@ h1 {
 
 #action-buttons {
     position: fixed;
-    /* bottom: 100px; */ 
-    bottom: 12vh; /* 修正点 ① */
-    left: 65%;
+    /* 修正点 ②: vh -> vmin, left調整, width/justify追加 */
+    bottom: 12vmin;
+    left: 50%;
     transform: translateX(-50%);
+    width: 90%;
+    justify-content: center;
     z-index: 100;
     display: none; /* 初期状態は非表示 */
     gap: 10px;
@@ -550,12 +559,12 @@ h1 {
 /* --- NEW STYLES --- */
 #tenpai-info-container {
     position: fixed;
-    /* bottom: 90px; */
-    bottom: 3vh; /* 修正点 ① */
-    left: 60%;
+    /* 修正点 ②: vh -> vmin, left調整, width/justify追加 */
+    bottom: 1vmin;
+    left: 50%;
     transform: translateX(-50%);
     width: auto;
-    max-width: 80%;
+    max-width: 90%;
     background: rgba(0, 0, 0, 0.75);
     border-radius: 8px;
     padding: 8px;
@@ -563,8 +572,8 @@ h1 {
     display: none; /* Initially hidden */
     flex-direction: column;
     gap: 5px;
-    /* max-height: 150px; */
-    max-height: 8vh; /* 修正点 ① (action-buttonsに被らないよう低く) */
+    /* 修正点 ②: vh -> vmin */
+    max-height: 10vmin;
     overflow-y: auto;
     font-size: 0.9em;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -811,4 +820,3 @@ h1 {
 #ranking-table tbody tr:nth-child(3) {
     color: #cd7f32; /* Bronze */
 }
-
